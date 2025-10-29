@@ -1,12 +1,12 @@
-# Mega_Admin_Builder_Exam_v2.py
+# Mega_Admin_Builder_Exam_v3.py
 # ------------------------------------------------------------------
 # Mega Formation — Admin Builder (Hidden Admin) + Candidate Clean UI
-# - Admin (behind password): يبني الامتحان ويضيف الأسئلة (radio / checkbox / text / tfn / highlight)
-# - Highlight type: المترشّح يختار كلمات/جمل من نص، والاختيارات تُعرض في جدول + تتصحّح
-# - Listening: رفع Audio + Transcript
-# - Exams saved/loaded as JSON in exams/
-# - Results per branch (MB/BZ) saved in results/
-# - Candidate view نظيفة (لا يرى أدوات الأدمين)
+# - Admin (password): يبني الامتحان ويضيف الأسئلة (radio / checkbox / text / tfn / highlight)
+# - Highlight: المترشّح يختار كلمات/جمل → جدول فوري → تصحيح نسبي
+# - حفظ/تحميل الامتحانات (JSON) في exams/
+# - نتائج حسب الفرع (MB/BZ) في results/
+# - تصحيح بالـ% لكل سؤال ولكل قسم، والإجمالي = معدل الأقسام
+# - مفاتيح فريدة لكل الويجتس لتفادي StreamlitDuplicateElementId
 # ------------------------------------------------------------------
 
 import streamlit as st
@@ -15,25 +15,25 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # ==================== ثوابت ====================
-LEVELS = ["A1","A2","B1","B2"]
+LEVELS   = ["A1","A2","B1","B2"]
 SECTIONS = ["Listening","Reading","Use of English","Writing"]
 BRANCHES = {"Menzel Bourguiba":"MB", "Bizerte":"BZ"}
-DEFAULT_DUR = {"A1":60, "A2":60, "B1":90, "B2":90}
-RESULT_PATHS = {"MB":"results/results_MB.csv", "BZ":"results/results_BZ.csv"}
+DEFAULT_DUR   = {"A1":60, "A2":60, "B1":90, "B2":90}
+RESULT_PATHS  = {"MB":"results/results_MB.csv", "BZ":"results/results_BZ.csv"}
 
-EXAMS_DIR = "exams"
-RESULTS_DIR = "results"
-MEDIA_DIR = "media"
+EXAMS_DIR  = "exams"
+RESULTS_DIR= "results"
+MEDIA_DIR  = "media"
 
-os.makedirs(EXAMS_DIR, exist_ok=True)
+os.makedirs(EXAMS_DIR,  exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
-os.makedirs(MEDIA_DIR, exist_ok=True)
+os.makedirs(MEDIA_DIR,  exist_ok=True)
 
-# كلمة سر وضع الأدمين (بدّلها هنا)
+# كلمة سر وضع الأدمين (بدّلها كما تحب)
 ADMIN_PASS = "megaadmin"
 
 # ==================== إعداد الصفحة ====================
-st.set_page_config(page_title="Mega Formation — Exam Builder (Admin hidden)", layout="wide")
+st.set_page_config(page_title="Mega Formation — Exam (Admin hidden)", layout="wide")
 st.markdown("""
 <style>
 .title {text-align:center; font-size:32px; font-weight:800; margin:0}
@@ -61,7 +61,8 @@ def now_iso():
 def results_df(path):
     if os.path.exists(path):
         return pd.read_csv(path)
-    return pd.DataFrame(columns=["timestamp","name","branch","level","exam_id","overall","Listening","Reading","Use_of_English","Writing"])
+    cols=["timestamp","name","branch","level","exam_id","overall","Listening","Reading","Use_of_English","Writing"]
+    return pd.DataFrame(columns=cols)
 
 def save_result_row(branch_code, row):
     path = RESULT_PATHS[branch_code]
@@ -71,10 +72,10 @@ def save_result_row(branch_code, row):
 
 def clean_filename(name:str)->str:
     safe = "".join(c if c.isalnum() or c in ("-","_",".") else "_" for c in (name or ""))
-    return safe[:80] or f"exam_{int(time.time())}.json"
+    return (safe[:80] or f"exam_{int(time.time())}.json")
 
 def init_state():
-    st.session_state.setdefault("is_admin", False)     # مخفي افتراضيًا
+    st.session_state.setdefault("is_admin", False)           # مخفي افتراضيًا
     st.session_state.setdefault("logo_bytes", None)
     st.session_state.setdefault("candidate_started", False)
     st.session_state.setdefault("deadline", None)
@@ -115,14 +116,14 @@ init_state()
 # ==================== Admin login (مخفي) ====================
 with st.sidebar:
     with st.expander("🔐 Admin login", expanded=False):
-        pw = st.text_input("Password", type="password")
-        if st.button("Login as admin"):
+        pw = st.text_input("Password", type="password", key="admin_pw_input")
+        if st.button("Login as admin", key="admin_login_btn"):
             if pw == ADMIN_PASS:
                 st.session_state.is_admin = True
                 st.success("Admin mode enabled.")
             else:
                 st.error("Wrong password.")
-        if st.session_state.is_admin and st.button("Logout"):
+        if st.session_state.is_admin and st.button("Logout", key="admin_logout_btn"):
             st.session_state.is_admin = False
 
 # ==================== ترويسة ====================
@@ -135,25 +136,28 @@ with c2:
     st.markdown("<div class='title'>Mega Formation — English Exam</div>", unsafe_allow_html=True)
     st.markdown("<div class='subtitle'>Candidate mode by default — Admin is hidden</div>", unsafe_allow_html=True)
 
-# ==================== Sidebar (Candidate controls only) ====================
+# ==================== Sidebar (Candidate controls فقط) ====================
 with st.sidebar:
     st.header("Candidate")
-    st.session_state.candidate_name = st.text_input("Your name", value=st.session_state.candidate_name)
-    st.session_state.candidate_branch = st.selectbox("Branch", list(BRANCHES.keys()),
-                                                     index=list(BRANCHES.keys()).index(st.session_state.candidate_branch))
+    st.session_state.candidate_name = st.text_input("Your name", value=st.session_state.candidate_name, key="cand_name")
+    st.session_state.candidate_branch = st.selectbox(
+        "Branch", list(BRANCHES.keys()),
+        index=list(BRANCHES.keys()).index(st.session_state.candidate_branch),
+        key="cand_branch_sel"
+    )
 
     meta = st.session_state.exam["meta"]
     level = meta.get("level", "B1")
     default_min = DEFAULT_DUR.get(level, 60)
 
     if not st.session_state.candidate_started:
-        if st.button("▶️ Start Exam"):
+        if st.button("▶️ Start Exam", key="cand_start"):
             st.session_state.answers = {s:{} for s in SECTIONS}
             st.session_state.candidate_started = True
             dur = int(meta.get("duration_min", default_min))
             st.session_state.deadline = datetime.utcnow() + timedelta(minutes=dur)
     else:
-        if st.button("🔁 Restart"):
+        if st.button("🔁 Restart", key="cand_restart"):
             st.session_state.answers = {s:{} for s in SECTIONS}
             st.session_state.candidate_started = False
             st.session_state.deadline = None
@@ -161,37 +165,83 @@ with st.sidebar:
 # ==================== أدوات الأدمين (مخفية إلا بعد لوجين) ====================
 def tokenise(text:str, mode:str):
     if not text: return []
+    import re
     if mode == "word":
-        # تقسيم بسيط على الفراغات وعلامات ترقيم خفيفة
-        import re
         tokens = re.findall(r"\w+[\w'-]*|[.,!?;:]", text)
         return [t for t in tokens if t.strip()]
-    # sentence
-    import re
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sentences if s.strip()]
 
-def points_of(item): return int(item.get("points",1))
-
-def score_item(item, user_val):
+def score_item_pct(item, user_val):
+    """
+    يرجّع نسبة % للسؤال (0..100).
+    - radio / tfn: 100% لو الإجابة مطابقة، وإلا 0%.
+    - checkbox / highlight (set-based):
+        corr = الإجابات الصحيحة (set)
+        sel  = إجابات المترشّح (set)
+        tp   = عدد الصحّ اللي اختارهم
+        fp   = عدد الزيادات الغلط
+        pct  = max(0, (tp - 0.5*fp) / len(corr)) * 100
+    - text (keywords):
+        لو Keywords محدّدة: pct = hits / len(keywords) * 100
+        لو لا: pct = 100 إذا الجواب مش فارغ، وإلا 0.
+    """
     itype = item.get("type")
     correct = item.get("answer")
-    pts = points_of(item)
-    if itype == "radio":
-        return pts if user_val == correct else 0
-    if itype == "checkbox":
-        return pts if set(user_val or []) == set(correct or []) else 0
-    if itype == "tfn":
-        return pts if (user_val in ["T","F","NG"] and user_val == correct) else 0
+    if itype in ("radio", "tfn"):
+        return 100.0 if (user_val is not None and user_val == correct) else 0.0
+    if itype in ("checkbox", "highlight"):
+        corr = set(correct or [])
+        sel  = set(user_val or [])
+        if not corr:
+            return 100.0 if not sel else 0.0
+        tp = len(corr & sel)
+        fp = len(sel - corr)
+        raw = (tp - 0.5*fp) / max(1, len(corr))
+        return max(0.0, min(1.0, raw)) * 100.0
     if itype == "text":
         kws = [k.strip().lower() for k in (correct or []) if k.strip()]
-        text = (user_val or "").lower()
-        hit = sum(1 for k in kws if k in text)
-        return min(pts, hit) if kws else (pts if text.strip() else 0)
-    if itype == "highlight":
-        # user_val = list of selected tokens; correct = list of target tokens (exact match)
-        return pts if set(user_val or []) == set(correct or []) else 0
-    return 0
+        txt = (user_val or "").strip().lower()
+        if not kws:
+            return 100.0 if txt else 0.0
+        hits = sum(1 for k in kws if k in txt)
+        return (hits / len(kws)) * 100.0
+    return 0.0
+
+def score_section_percent(tasks, user_map):
+    """
+    يرجّع (section_pct, df) حيث:
+      - section_pct = معدّل نسب الأسئلة
+      - df فيه Q#, type, question, user, correct, Q%
+    """
+    rows, q_pcts = [], []
+    for i, t in enumerate(tasks or []):
+        u = user_map.get(i)
+        pct = score_item_pct(t, u)
+        q_pcts.append(pct)
+        corr = t.get("answer")
+        corr_disp = ", ".join(corr) if isinstance(corr, list) else corr
+        u_disp = ", ".join(u) if isinstance(u, list) else u
+        text_src = t.get("q","")
+        if t.get("type")=="highlight":
+            text_src = t.get("options",{}).get("text","")
+        rows.append({
+            "Q#": i+1,
+            "type": t.get("type"),
+            "question": (text_src or "")[:100],
+            "user": u_disp,
+            "correct": corr_disp,
+            "Q%": round(pct,1)
+        })
+    section_pct = round(sum(q_pcts)/len(q_pcts), 1) if q_pcts else 0.0
+    return section_pct, pd.DataFrame(rows)
+
+def score_writing_pct(text, min_w, max_w, keywords):
+    wc = len((text or "").split())
+    base = 40 if (min_w and max_w and min_w <= wc <= max_w) else (20 if wc>0 else 0)
+    hits = sum(1 for k in (keywords or []) if k.lower() in (text or "").lower())
+    kw_score = min(60, hits*12)
+    return float(min(100, base + kw_score)), wc, hits
 
 def render_task_editor(section_key, idx=None):
     st.markdown("<div class='card'>", unsafe_allow_html=True)
@@ -202,15 +252,13 @@ def render_task_editor(section_key, idx=None):
 
     if idx is None:
         itype = st.selectbox("Question type", TYPES, key=f"{section_key}_new_type")
-        q = st.text_area("Question / Prompt", key=f"{section_key}_new_q")
-        pts = st.number_input("Points", value=1, step=1, min_value=1, key=f"{section_key}_new_points")
+        q     = st.text_area("Question / Prompt", key=f"{section_key}_new_q")
+        pts   = st.number_input("Points (للإطلاع فقط — التصحيح بالنِّسب)", value=1, step=1, min_value=1, key=f"{section_key}_new_points")
 
         options, correct = [], None
-        h_text, h_mode, h_max, h_correct = "", "word", 3, []
-
         if itype in ("radio","checkbox"):
             opts_raw = st.text_area("Options (one per line)", key=f"{section_key}_new_opts")
-            options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+            options  = [o.strip() for o in opts_raw.splitlines() if o.strip()]
             if itype == "radio":
                 correct = st.selectbox("Correct option", options, index=0 if options else None, key=f"{section_key}_new_corr_radio")
             else:
@@ -229,7 +277,7 @@ def render_task_editor(section_key, idx=None):
             st.caption("Highlight settings")
             h_text = st.text_area("Source text (to select from)", key=f"{section_key}_new_h_text")
             h_mode = st.radio("Selection unit", MODES, horizontal=True, key=f"{section_key}_new_h_mode")
-            h_max = st.number_input("Max selections allowed", value=3, min_value=1, step=1, key=f"{section_key}_new_h_max")
+            h_max  = st.number_input("Max selections allowed", value=3, min_value=1, step=1, key=f"{section_key}_new_h_max")
             tokens = tokenise(h_text, h_mode)
             st.write(f"Preview {h_mode}s ({len(tokens)}):")
             st.write(tokens[:15] if len(tokens)>15 else tokens)
@@ -241,26 +289,28 @@ def render_task_editor(section_key, idx=None):
             task = {"type": itype, "q": q.strip(), "options": options, "answer": correct, "points": int(pts)}
             st.session_state.exam[section_key]["tasks"].append(task)
             st.success("Task added.")
-    else:
-        data = st.session_state.exam[section_key]["tasks"][idx]
-        itype = st.selectbox("Question type", TYPES, index=TYPES.index(data.get("type","radio")), key=f"{section_key}_edit_type_{idx}")
-        q = st.text_area("Question / Prompt", value=data.get("q",""), key=f"{section_key}_edit_q_{idx}")
-        pts = st.number_input("Points", value=int(data.get("points",1)), step=1, min_value=1, key=f"{section_key}_edit_points_{idx}")
 
-        options = data.get("options", [])
-        correct = data.get("answer", [])
+    else:
+        data   = st.session_state.exam[section_key]["tasks"][idx]
+        itype  = st.selectbox("Question type", TYPES, index=TYPES.index(data.get("type","radio")), key=f"{section_key}_edit_type_{idx}")
+        q      = st.text_area("Question / Prompt", value=data.get("q",""), key=f"{section_key}_edit_q_{idx}")
+        pts    = st.number_input("Points (للإطلاع فقط — التصحيح بالنِّسب)", value=int(data.get("points",1)), step=1, min_value=1, key=f"{section_key}_edit_points_{idx}")
+        options= data.get("options", [])
+        correct= data.get("answer", [])
 
         if itype in ("radio","checkbox"):
             opts_raw = st.text_area("Options (one per line)", value="\n".join(options), key=f"{section_key}_edit_opts_{idx}")
-            options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+            options  = [o.strip() for o in opts_raw.splitlines() if o.strip()]
             if itype == "radio":
-                correct = st.selectbox("Correct option", options, index=options.index(correct) if (correct in options) else 0 if options else 0, key=f"{section_key}_edit_corr_radio_{idx}")
+                index_corr = options.index(correct) if (correct in options) else (0 if options else 0)
+                correct    = st.selectbox("Correct option", options, index=index_corr, key=f"{section_key}_edit_corr_radio_{idx}")
             else:
-                correct = st.multiselect("Correct options", options, default=[o for o in correct if o in options], key=f"{section_key}_edit_corr_ck_{idx}")
+                correct    = st.multiselect("Correct options", options, default=[o for o in correct if o in options], key=f"{section_key}_edit_corr_ck_{idx}")
 
         elif itype == "tfn":
             options = ["T","F","NG"]
-            correct = st.selectbox("Correct", options, index=options.index(correct) if correct in options else 0, key=f"{section_key}_edit_corr_tfn_{idx}")
+            index_corr = options.index(correct) if correct in options else 0
+            correct = st.selectbox("Correct", options, index=index_corr, key=f"{section_key}_edit_corr_tfn_{idx}")
 
         elif itype == "text":
             correct_raw = st.text_input("Keywords (comma-separated)", value=", ".join(correct if isinstance(correct,list) else []), key=f"{section_key}_edit_corr_txt_{idx}")
@@ -272,7 +322,7 @@ def render_task_editor(section_key, idx=None):
             h_mode = (options or {}).get("mode","word")
             h_max  = int((options or {}).get("max_select",3))
             h_text = st.text_area("Source text (to select from)", value=h_text, key=f"{section_key}_edit_h_text_{idx}")
-            h_mode = st.radio("Selection unit", MODES, index=MODES.index(h_mode) if h_mode in MODES else 0, horizontal=True, key=f"{section_key}_edit_h_mode_{idx}")
+            h_mode = st.radio("Selection unit", ["word","sentence"], index=(0 if h_mode=="word" else 1), horizontal=True, key=f"{section_key}_edit_h_mode_{idx}")
             h_max  = st.number_input("Max selections allowed", value=h_max, min_value=1, step=1, key=f"{section_key}_edit_h_max_{idx}")
             tokens = tokenise(h_text, h_mode)
             st.write(f"Preview {h_mode}s ({len(tokens)}):")
@@ -298,7 +348,7 @@ def render_section_tasks_admin(section_key, title=None):
     tasks = st.session_state.exam[section_key]["tasks"]
     if tasks:
         for i, t in enumerate(tasks):
-            with st.expander(f"Task {i+1} — {t.get('type','radio')}: {t.get('q','')[:60]}"):
+            with st.expander(f"Task {i+1} — {t.get('type','radio')}: {t.get('q','')[:60]}", expanded=False):
                 render_task_editor(section_key, idx=i)
     else:
         st.info("No tasks yet.")
@@ -309,8 +359,8 @@ def render_listening_admin():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Listening — Audio & Transcript")
     L = st.session_state.exam["listening"]
-    L["transcript"] = st.text_area("Transcript", value=L.get("transcript",""))
-    up = st.file_uploader("Upload audio (MP3/WAV)", type=["mp3","wav"], key="listen_upload")
+    L["transcript"] = st.text_area("Transcript", value=L.get("transcript",""), key="adm_listen_transcript")
+    up = st.file_uploader("Upload audio (MP3/WAV)", type=["mp3","wav"], key="adm_listen_upload")
     if up:
         fname = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{clean_filename(up.name)}"
         fpath = os.path.join(MEDIA_DIR, fname)
@@ -332,7 +382,7 @@ def render_reading_admin():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Reading — Passage")
     R = st.session_state.exam["reading"]
-    R["passage"] = st.text_area("Passage", value=R.get("passage",""))
+    R["passage"] = st.text_area("Passage", value=R.get("passage",""), key="adm_read_passage")
     st.session_state.exam["reading"] = R
     st.markdown("</div>", unsafe_allow_html=True)
     render_section_tasks_admin("reading", "Reading — Tasks")
@@ -344,41 +394,42 @@ def render_writing_admin():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Writing — Prompt & Auto-criteria")
     W = st.session_state.exam["writing"]
-    W["prompt"] = st.text_area("Prompt", value=W.get("prompt",""))
+    W["prompt"] = st.text_area("Prompt", value=W.get("prompt",""), key="adm_writing_prompt")
     c1,c2 = st.columns(2)
-    W["min_words"] = c1.number_input("Min words", value=int(W.get("min_words",100)), min_value=0, step=5)
-    W["max_words"] = c2.number_input("Max words", value=int(W.get("max_words",150)), min_value=0, step=5)
-    kw_raw = st.text_input("Keywords (comma-separated)", value=", ".join(W.get("keywords",[])))
+    W["min_words"] = c1.number_input("Min words", value=int(W.get("min_words",100)), min_value=0, step=5, key="adm_writing_min")
+    W["max_words"] = c2.number_input("Max words", value=int(W.get("max_words",150)), min_value=0, step=5, key="adm_writing_max")
+    kw_raw = st.text_input("Keywords (comma-separated)", value=", ".join(W.get("keywords",[])), key="adm_writing_kws")
     W["keywords"] = [k.strip() for k in kw_raw.split(",") if k.strip()]
     st.session_state.exam["writing"] = W
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ===== أدوات إدارة الامتحانات (حفظ/تحميل) =====
 def admin_meta_bar():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Exam meta & Save/Load")
     meta = st.session_state.exam["meta"]
-    meta["title"] = st.text_input("Exam Title", value=meta.get("title","Mega Formation English Exam"))
-    meta["level"] = st.selectbox("Level", LEVELS, index=LEVELS.index(meta.get("level","B1")))
-    meta["branch"] = st.selectbox("Branch", list(BRANCHES.keys()), index=list(BRANCHES.keys()).index(meta.get("branch","Menzel Bourguiba")))
+    meta["title"] = st.text_input("Exam Title", value=meta.get("title","Mega Formation English Exam"), key="meta_title")
+    meta["level"] = st.selectbox("Level", LEVELS, index=LEVELS.index(meta.get("level","B1")), key="meta_level")
+    meta["branch"]= st.selectbox("Branch", list(BRANCHES.keys()),
+                                 index=list(BRANCHES.keys()).index(meta.get("branch","Menzel Bourguiba")),
+                                 key="meta_branch")
     default_min = DEFAULT_DUR.get(meta["level"], 60)
-    meta["duration_min"] = st.number_input("Duration (minutes)", value=int(meta.get("duration_min", default_min)), min_value=10, step=5)
-    meta["exam_id"] = st.text_input("Exam ID (for saving)", value=meta.get("exam_id",""))
+    meta["duration_min"] = st.number_input("Duration (minutes)", value=int(meta.get("duration_min", default_min)), min_value=10, step=5, key="meta_duration")
+    meta["exam_id"] = st.text_input("Exam ID (for saving)", value=meta.get("exam_id",""), key="meta_exam_id")
     st.session_state.exam["meta"] = meta
 
     st.markdown("---")
     fname_default = clean_filename(meta["exam_id"] or f"{meta['level']}_{BRANCHES[meta['branch']]}_{datetime.now().strftime('%Y%m%d')}.json")
     c1,c2 = st.columns(2)
     with c1:
-        if st.button("💾 Save to exams/"):
+        if st.button("💾 Save to exams/", key="meta_save"):
             path = os.path.join(EXAMS_DIR, fname_default)
             save_json(path, st.session_state.exam)
             st.session_state.exam_loaded_path = path
             st.success(f"Saved: {path}")
     with c2:
         existing = [f for f in os.listdir(EXAMS_DIR) if f.lower().endswith(".json")]
-        sel = st.selectbox("Load exam", ["-- select --"]+existing, key="load_sel")
-        if sel != "-- select --" and st.button("📂 Load selected"):
+        sel = st.selectbox("Load exam", ["-- select --"]+existing, key="meta_load_sel")
+        if sel != "-- select --" and st.button("📂 Load selected", key="meta_load_btn"):
             path = os.path.join(EXAMS_DIR, sel)
             data = load_json(path)
             if data:
@@ -437,10 +488,8 @@ def render_candidate():
                 mode = opts.get("mode","word")
                 max_sel = int(opts.get("max_select",3))
                 tokens = tokenise(src_text, mode)
-                # multiselect للاختيار
                 st.write(t["q"])
                 selected = st.multiselect(f"Select up to {max_sel} {mode}(s):", tokens, key=key, max_selections=max_sel)
-                # جدول فوري
                 if selected:
                     df_sel = pd.DataFrame({"#": range(1, len(selected)+1), mode: selected})
                     st.dataframe(df_sel, use_container_width=True)
@@ -523,55 +572,33 @@ def render_candidate():
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Submit
-    def score_section(tasks, user_map):
-        total_pts = sum(points_of(t) for t in tasks)
-        got_pts = 0
-        rows = []
-        for i, t in enumerate(tasks):
-            u = user_map.get(i)
-            s = score_item(t, u)
-            got_pts += s
-            # تنظيف عرض الصحيح
-            corr = t.get("answer")
-            if isinstance(corr, list): corr_disp = ", ".join(corr)
-            else: corr_disp = corr
-            if isinstance(u, list): u_disp = ", ".join(u)
-            else: u_disp = u
-            rows.append({"Q#":i+1,"type": t.get("type"), "q": t.get("q","")[:80],
-                         "user": u_disp, "correct": corr_disp, "points": points_of(t), "score": s})
-        pct = round(100.0 * got_pts / total_pts, 1) if total_pts>0 else 0.0
-        return pct, pd.DataFrame(rows)
-
-    def score_writing(text, min_w, max_w, keywords):
-        wc = len((text or "").split())
-        base = 40 if (min_w and max_w and min_w <= wc <= max_w) else (20 if wc>0 else 0)
-        hits = sum(1 for k in (keywords or []) if k.lower() in (text or "").lower())
-        kw_score = min(60, hits * 12)
-        return min(100, base + kw_score), wc, hits
+    def section_and_overall_scoring():
+        # Listening
+        L_tasks = st.session_state.exam["listening"]["tasks"]
+        L_pct, L_df = score_section_percent(L_tasks, st.session_state.answers["Listening"])
+        # Reading
+        R_tasks = st.session_state.exam["reading"]["tasks"]
+        R_pct, R_df = score_section_percent(R_tasks, st.session_state.answers["Reading"])
+        # Use
+        U_tasks = st.session_state.exam["use"]["tasks"]
+        U_pct, U_df = score_section_percent(U_tasks, st.session_state.answers["Use of English"])
+        # Writing
+        W = st.session_state.exam["writing"]
+        W_text = st.session_state.answers["Writing"].get(0,"")
+        W_pct, wc, hits = score_writing_pct(W_text, W.get("min_words",0), W.get("max_words",0), W.get("keywords",[]))
+        overall = round((L_pct + R_pct + U_pct + W_pct)/4, 1)
+        return (L_pct,L_df),(R_pct,R_df),(U_pct,U_df),(W_pct,wc,hits), overall
 
     colL, colR = st.columns([2,1])
     with colL:
         can_submit = st.session_state.candidate_started
-        if st.button("✅ Submit All", type="primary", disabled=not can_submit):
+        if st.button("✅ Submit All", type="primary", disabled=not can_submit, key="cand_submit"):
             st.session_state.candidate_started = False
-            # Listening
-            L_tasks = st.session_state.exam["listening"]["tasks"]
-            L_pct, L_df = score_section(L_tasks, st.session_state.answers["Listening"])
-            # Reading
-            R_tasks = st.session_state.exam["reading"]["tasks"]
-            R_pct, R_df = score_section(R_tasks, st.session_state.answers["Reading"])
-            # Use
-            U_tasks = st.session_state.exam["use"]["tasks"]
-            U_pct, U_df = score_section(U_tasks, st.session_state.answers["Use of English"])
-            # Writing
-            W = st.session_state.exam["writing"]
-            W_text = st.session_state.answers["Writing"].get(0,"")
-            W_pct, wc, hits = score_writing(W_text, W.get("min_words",0), W.get("max_words",0), W.get("keywords",[]))
-
-            overall = round((L_pct + R_pct + U_pct + W_pct)/4, 1)
+            (L_pct,L_df),(R_pct,R_df),(U_pct,U_df),(W_info), overall = section_and_overall_scoring()
+            W_pct, wc, hits = W_info
             st.success(f"**Overall: {overall}%**")
             st.write({"Listening":L_pct, "Reading":R_pct, "Use of English":U_pct, "Writing":W_pct})
-            st.caption(f"Writing: words={wc}, keyword hits={hits}/{len(W.get('keywords',[]))}")
+            st.caption(f"Writing: words={wc}, keywords matched={hits}/{len(st.session_state.exam['writing'].get('keywords',[]))}")
 
             # حفظ حسب الفرع
             bcode = BRANCHES[st.session_state.candidate_branch]
@@ -590,22 +617,24 @@ def render_candidate():
             }
             save_result_row(bcode, row)
 
-            # تنزيل تقارير (اختياري)
-            st.download_button("⬇️ Listening report", L_df.to_csv(index=False).encode(), "listening_report.csv", "text/csv")
-            st.download_button("⬇️ Reading report",   R_df.to_csv(index=False).encode(), "reading_report.csv",   "text/csv")
-            st.download_button("⬇️ Use report",       U_df.to_csv(index=False).encode(), "use_report.csv",       "text/csv")
+            # تنزيل تقارير
+            st.download_button("⬇️ Listening report", L_df.to_csv(index=False).encode(), "listening_report.csv", "text/csv", key="dl_listen")
+            st.download_button("⬇️ Reading report",   R_df.to_csv(index=False).encode(), "reading_report.csv",   "text/csv", key="dl_read")
+            st.download_button("⬇️ Use report",       U_df.to_csv(index=False).encode(), "use_report.csv",       "text/csv", key="dl_use")
 
     with colR:
         if st.session_state.candidate_started and st.session_state.deadline:
             left = st.session_state.deadline - datetime.utcnow()
             if left.total_seconds() <= 0:
-                st.warning("Time is up! Consider submitting.")
+                st.warning("Time is up! Consider submitting.", icon="⏰")
 
 # ==================== Admin UI (hidden unless logged in) ====================
 if st.session_state.is_admin:
     st.markdown("---")
     st.subheader("🛡️ Admin Mode")
+    # Meta & Save/Load
     admin_meta_bar()
+    # Tabs
     tabs_admin = st.tabs(["Listening","Reading","Use of English","Writing","Results"])
     with tabs_admin[0]:
         render_listening_admin()
@@ -618,17 +647,18 @@ if st.session_state.is_admin:
     with tabs_admin[4]:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.subheader("Results by Branch")
-        sel_branch = st.selectbox("Branch", list(BRANCHES.keys()))
+        sel_branch = st.selectbox("Branch", list(BRANCHES.keys()), key="admin_branch_sel")
         code = BRANCHES[sel_branch]
         df = results_df(RESULT_PATHS[code])
         if df.empty:
             st.info("No results yet.")
         else:
-            lvl_filter = st.multiselect("Filter levels", LEVELS, default=LEVELS)
+            lvl_filter = st.multiselect("Filter levels", LEVELS, default=LEVELS, key="admin_levels_filter")
             view = df[df["level"].isin(lvl_filter)].copy()
             st.dataframe(view, use_container_width=True)
             st.download_button("⬇️ Download CSV", data=view.to_csv(index=False).encode(),
-                               file_name=f"results_{code}.csv", mime="text/csv")
+                               file_name=f"results_{code}.csv", mime="text/csv", key="admin_results_dl")
         st.markdown("</div>", unsafe_allow_html=True)
 
-# ====== نهاية الكود ======
+# ==================== Candidate view دائمًا ظاهر ====================
+render_candidate()
