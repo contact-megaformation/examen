@@ -195,4 +195,5 @@ if st.session_state.mode == "Admin":
     with tabL:
         st.subheader("Listening — إعداد سريع بالنص")
         lcol1,lcol2 = st.columns(2)
-        with l
+        with l:
+
