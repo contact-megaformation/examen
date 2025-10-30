@@ -151,15 +151,17 @@ def init_state():
 init_state()
 
 # ---------------- Header ----------------
-c1,c2 = st.columns([1,4])
+# ---------------- Header (with auto logo) ----------------
+c1, c2 = st.columns([1, 4])
 with c1:
-    lg = st.file_uploader("Logo (PNG/JPG)", type=["png","jpg","jpeg"], key="logo_up")
-    if lg: st.session_state.logo_bytes = lg.read()
-    if st.session_state.logo_bytes: st.image(st.session_state.logo_bytes, use_container_width=False)
+    default_logo_path = os.path.join(MEDIA_DIR, "mega_logo.png")
+    if os.path.exists(default_logo_path):
+        st.image(default_logo_path, use_container_width=False)
+    else:
+        st.markdown("🧭 **Mega Formation**")
 with c2:
     st.markdown("<h2 style='margin:0'>Mega Formation — Level Exams</h2>", unsafe_allow_html=True)
     st.caption("Candidate mode by default — Admin behind password")
-
 # ---------------- Sidebar: Candidate controls ----------------
 with st.sidebar:
     st.header("Candidate")
@@ -489,10 +491,9 @@ def render_candidate():
             W_pct, wc, hits = score_writing_pct(W_text, W.get("min_words",0), W.get("max_words",0), W.get("keywords",[]))
             overall = round((L_pct + R_pct + U_pct + W_pct)/4, 1)
 
-            st.success(f"**Overall: {overall}%**")
-            st.write({"Listening":L_pct, "Reading":R_pct, "Use of English":U_pct, "Writing":W_pct})
-            st.caption(f"Writing: words={wc}, keyword hits={hits}/{len(W.get('keywords',[]))}")
-
+            # Hide result from candidate; only save for admin view
+            st.info("✅ Your answers have been submitted successfully. Thank you!")
+            st.caption("Your exam has been recorded. You can leave the page now.")
             # Save per-branch
             bcode = BRANCHES[st.session_state.get("cand_branch_sel","Menzel Bourguiba")]
             row = {
@@ -526,3 +527,4 @@ if st.session_state.is_admin:
 
 # ---------------- Always show Candidate View ----------------
 render_candidate()
+
