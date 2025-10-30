@@ -325,6 +325,20 @@ def admin_panel():
         if st.button("💾 Save this level", key="admin_save_level"):
             save_json(path, st.session_state.exam)
             st.success(f"Saved {os.path.basename(path)}")
+    # ---------------- Admin Results Viewer ----------------
+    def admin_results_viewer():
+        st.markdown("---")
+        st.subheader("📊 Results Dashboard")
+        sel_branch = st.selectbox("Select branch", list(BRANCHES.keys()), key="admin_results_branch")
+        bcode = BRANCHES[sel_branch]
+        path = RESULT_PATHS[bcode]
+        df = results_df(path)
+        if df.empty:
+            st.warning("No results yet for this branch.")
+        else:
+            st.dataframe(df.sort_values("timestamp", ascending=False), use_container_width=True)
+            st.download_button("⬇️ Download results CSV", df.to_csv(index=False).encode(), f"{bcode}_results.csv", "text/csv", key="dl_results")
+
 
     # Listening
     st.markdown("### Listening")
@@ -527,4 +541,5 @@ if st.session_state.is_admin:
 
 # ---------------- Always show Candidate View ----------------
 render_candidate()
+
 
