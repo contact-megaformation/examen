@@ -15,7 +15,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # ---------------- Config & Constants ----------------
-st.set_page_config(page_title="Mega Formation — Level Exams", layout="wide")
+st.set_page_config(page_title="American Canadian Board — Mega Formation Level Exams", layout="wide")
 
 LEVELS   = ["A1","A2","B1","B2"]
 SECTIONS = ["Listening","Reading","Use of English","Writing"]
@@ -543,3 +543,4 @@ if st.session_state.is_admin:
 
 # ---------------- Always show Candidate View ----------------
 render_candidate()
+
