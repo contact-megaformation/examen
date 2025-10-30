@@ -1,4 +1,4 @@
-# Mega_Level_Builder_Simple_UPDATED.py
+# Mega_Level_Builder_Simple.py
 # ------------------------------------------------------------------
 # Mega Formation — Level-based Simple Builder (Admin hidden)
 # Admin: يختار المستوى A1/A2/B1/B2، يبني/يعدّل أسئلة المستوى ويحفظها في exams/EXAM_<LEVEL>.json
@@ -6,7 +6,6 @@
 # أقسام: Listening / Reading / Use of English / Writing
 # أنواع أسئلة: radio / checkbox / text / tfn / highlight(word|sentence)
 # تصحيح بالـ% لكل سؤال ولكل قسم؛ النتائج تحفظ حسب الفرع (MB/BZ) في results/
-# + تعديلــــات: لوجو تلقائي من media/mega_logo.png + النتيجة ما تظهرش للـCandidate + Dashboard للأدمين
 # ------------------------------------------------------------------
 
 import streamlit as st
@@ -45,12 +44,10 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def now_iso():
-    return datetime.now().isoformat(timespec="seconds")
+def now_iso(): return datetime.now().isoformat(timespec="seconds")
 
 def results_df(path):
-    if os.path.exists(path):
-        return pd.read_csv(path)
+    if os.path.exists(path): return pd.read_csv(path)
     cols=["timestamp","name","branch","level","exam_id","overall","Listening","Reading","Use_of_English","Writing"]
     return pd.DataFrame(columns=cols)
 
@@ -144,6 +141,7 @@ def empty_exam(level:str):
 # ---------------- State ----------------
 def init_state():
     st.session_state.setdefault("is_admin", False)         # مخفي افتراضيًا
+    st.session_state.setdefault("logo_bytes", None)
     st.session_state.setdefault("admin_level", "B1")       # مستوى الأدمين يحرّر فيه
     st.session_state.setdefault("candidate_level", "B1")   # مستوى المترشح
     st.session_state.setdefault("candidate_started", False)
@@ -152,14 +150,12 @@ def init_state():
     st.session_state.setdefault("exam", empty_exam("B1"))  # نموذج محلي للتحرير الحالي
 init_state()
 
-# ---------------- Header (Auto Logo) ----------------
-c1, c2 = st.columns([1,4])
+# ---------------- Header ----------------
+c1,c2 = st.columns([1,4])
 with c1:
-    default_logo_path = os.path.join(MEDIA_DIR, "mega_logo.png")
-    if os.path.exists(default_logo_path):
-        st.image(default_logo_path, use_container_width=False)
-    else:
-        st.markdown("🧭 **Mega Formation**")
+    lg = st.file_uploader("Logo (PNG/JPG)", type=["png","jpg","jpeg"], key="logo_up")
+    if lg: st.session_state.logo_bytes = lg.read()
+    if st.session_state.logo_bytes: st.image(st.session_state.logo_bytes, use_container_width=False)
 with c2:
     st.markdown("<h2 style='margin:0'>Mega Formation — Level Exams</h2>", unsafe_allow_html=True)
     st.caption("Candidate mode by default — Admin behind password")
@@ -167,9 +163,7 @@ with c2:
 # ---------------- Sidebar: Candidate controls ----------------
 with st.sidebar:
     st.header("Candidate")
-    st.session_state.candidate_level = st.selectbox(
-        "Level", LEVELS, index=LEVELS.index(st.session_state.candidate_level), key="cand_level_sel"
-    )
+    st.session_state.candidate_level = st.selectbox("Level", LEVELS, index=LEVELS.index(st.session_state.candidate_level), key="cand_level_sel")
     cand_name = st.text_input("Your name", key="cand_name")
     cand_branch = st.selectbox("Branch", list(BRANCHES.keys()), key="cand_branch_sel")
 
@@ -247,18 +241,17 @@ def render_task_editor(section_key, idx=None):
                 "type": itype, "q": q.strip(), "options": options, "answer": correct
             })
             st.success("Task added.")
-
     else:
-        data   = st.session_state.exam[section_key]["tasks"][idx]
-        itype  = st.selectbox("Type", TYPES, index=TYPES.index(data.get("type","radio")), key=f"{section_key}_edit_type_{idx}")
-        q      = st.text_area("Question / Prompt", value=data.get("q",""), key=f"{section_key}_edit_q_{idx}")
-        options= data.get("options", [])
-        correct= data.get("answer", [])
+        data = st.session_state.exam[section_key]["tasks"][idx]
+        itype = st.selectbox("Type", TYPES, index=TYPES.index(data.get("type","radio")), key=f"{section_key}_edit_type_{idx}")
+        q     = st.text_area("Question / Prompt", value=data.get("q",""), key=f"{section_key}_edit_q_{idx}")
+        options = data.get("options", [])
+        correct = data.get("answer", [])
         if itype in ("radio","checkbox"):
             opts_raw = st.text_area("Options (one per line)", value="\n".join(options), key=f"{section_key}_edit_opts_{idx}")
             options  = [o.strip() for o in opts_raw.splitlines() if o.strip()]
             if itype == "radio":
-                ix = options.index(correct) if (correct in options) else (0 if options else 0)
+                ix = options.index(correct) if (correct in options) else 0 if options else 0
                 correct = st.selectbox("Correct option", options, index=ix, key=f"{section_key}_edit_corr_radio_{idx}")
             else:
                 correct = st.multiselect("Correct options", options, default=[o for o in (correct or []) if o in options], key=f"{section_key}_edit_corr_ck_{idx}")
@@ -282,7 +275,7 @@ def render_task_editor(section_key, idx=None):
             correct  = st.multiselect("Correct selections (exact match)", tokens, default=[c for c in (correct or []) if c in tokens], key=f"{section_key}_edit_h_corr_{idx}")
             options  = {"text": src_text, "mode": unit, "max_select": int(max_sel)}
 
-        c1, c2 = st.columns(2)
+        c1,c2 = st.columns(2)
         with c1:
             if st.button("💾 Save", key=f"{section_key}_save_{idx}"):
                 st.session_state.exam[section_key]["tasks"][idx] = {"type": itype, "q": q.strip(), "options": options, "answer": correct}
@@ -308,7 +301,7 @@ def admin_panel():
     st.markdown("---")
     st.subheader("🛡️ Admin Mode (Level-focused)")
     # اختيار المستوى الذي تريد تحريره
-    col1, col2, col3 = st.columns([1,1,1])
+    col1,col2,col3 = st.columns([1,1,1])
     with col1:
         st.session_state.admin_level = st.selectbox("Level to edit", LEVELS, index=LEVELS.index(st.session_state.admin_level), key="admin_level_sel")
     with col2:
@@ -370,26 +363,12 @@ def admin_panel():
     W["keywords"] = [k.strip() for k in kraw.split(",") if k.strip()]
     st.session_state.exam["writing"] = W
 
-# ---------------- Admin Results Viewer ----------------
-def admin_results_viewer():
-    st.markdown("---")
-    st.subheader("📊 Results Dashboard")
-    sel_branch = st.selectbox("Select branch", list(BRANCHES.keys()), key="admin_results_branch")
-    bcode = BRANCHES[sel_branch]
-    path = RESULT_PATHS[bcode]
-    df = results_df(path)
-    if df.empty:
-        st.warning("No results yet for this branch.")
-    else:
-        st.dataframe(df.sort_values("timestamp", ascending=False), use_container_width=True)
-        st.download_button("⬇️ Download results CSV", df.to_csv(index=False).encode(), f"{bcode}_results.csv", "text/csv", key="dl_results")
-
 # ---------------- Candidate View ----------------
 def render_candidate():
     meta = st.session_state.exam["meta"]
     st.markdown("---")
     st.subheader("🎓 Candidate View")
-    c1, c2 = st.columns([1,1])
+    c1,c2 = st.columns([1,1])
     with c1:
         st.markdown(f"**Level**: **{meta.get('level','')}**")
     with c2:
@@ -510,7 +489,11 @@ def render_candidate():
             W_pct, wc, hits = score_writing_pct(W_text, W.get("min_words",0), W.get("max_words",0), W.get("keywords",[]))
             overall = round((L_pct + R_pct + U_pct + W_pct)/4, 1)
 
-            # ❗ لا نظهر النتيجة للمترشّح — فقط نسجّلها
+            st.success(f"**Overall: {overall}%**")
+            st.write({"Listening":L_pct, "Reading":R_pct, "Use of English":U_pct, "Writing":W_pct})
+            st.caption(f"Writing: words={wc}, keyword hits={hits}/{len(W.get('keywords',[]))}")
+
+            # Save per-branch
             bcode = BRANCHES[st.session_state.get("cand_branch_sel","Menzel Bourguiba")]
             row = {
                 "timestamp": now_iso(),
@@ -526,9 +509,10 @@ def render_candidate():
             }
             save_result_row(bcode, row)
 
-            # رسالة بسيطة فقط
-            st.info("✅ Your answers have been submitted successfully. Thank you!")
-            st.caption("Your exam has been recorded. You can leave the page now.")
+            # Downloads
+            st.download_button("⬇️ Listening report", L_df.to_csv(index=False).encode(), "listening_report.csv", "text/csv", key="dl_listen")
+            st.download_button("⬇️ Reading report",   R_df.to_csv(index=False).encode(), "reading_report.csv",   "text/csv", key="dl_read")
+            st.download_button("⬇️ Use report",       U_df.to_csv(index=False).encode(), "use_report.csv",       "text/csv", key="dl_use")
 
     with cR:
         if st.session_state.candidate_started and st.session_state.deadline:
@@ -539,7 +523,6 @@ def render_candidate():
 # ---------------- Show Admin Panel if logged in ----------------
 if st.session_state.is_admin:
     admin_panel()
-    admin_results_viewer()   # يشوف النتائج فقط الأدمين
 
 # ---------------- Always show Candidate View ----------------
 render_candidate()
