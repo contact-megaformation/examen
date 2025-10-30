@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # ---------------- Config & Constants ----------------
-st.set_page_config(page_title=" American Candian Board— Mega Formation Level Exams", layout="wide")
+st.set_page_config(page_title="American Canadian Board —Mega Formation Level Exams", layout="wide")
 
 BASE_DIR   = Path(__file__).resolve().parent
 EXAMS_DIR  = BASE_DIR / "exams"
@@ -611,4 +611,3 @@ if st.session_state.is_admin:
 
 # ---------------- Always show Candidate View ----------------
 render_candidate()
-
