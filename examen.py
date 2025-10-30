@@ -1,21 +1,22 @@
-# Mega_Level_Builder_Simple_RESTORED.py
+# Mega_Level_Builder_Simple_PREVIEW.py
 # ------------------------------------------------------------------
 # Mega Formation — Level-based Simple Builder (Admin hidden)
-# نسخة مُسترجعة مع تحسينات بدون ما تضيّع ملفاتك:
 # - مسارات ثابتة (exams / results / media) بجنب السكريبت
 # - لوغو أوتوماتيك من media/mega_logo.png
 # - النتائج مخفية عن المترشّح، تظهر فقط للأدمين (Dashboard)
 # - متصفّح exams + Export/Import JSON + Scan & Recover
+# - زر Preview Exam (قراءة فقط)
+# - إصلاح قيمة duration_min الافتراضية
 # ------------------------------------------------------------------
 
 import streamlit as st
-import os, json, time, re, glob, shutil
+import os, json, time, re, shutil
 import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
 
 # ---------------- Config & Constants ----------------
-st.set_page_config(page_title="American Canadian Board —Mega Formation Level Exams", layout="wide")
+st.set_page_config(page_title="Mega Formation — Level Exams", layout="wide")
 
 BASE_DIR   = Path(__file__).resolve().parent
 EXAMS_DIR  = BASE_DIR / "exams"
@@ -176,6 +177,7 @@ def init_state():
     st.session_state.setdefault("deadline", None)
     st.session_state.setdefault("answers", {s:{} for s in SECTIONS})
     st.session_state.setdefault("exam", empty_exam("B1"))  # نموذج محلي للتحرير الحالي
+    st.session_state.setdefault("show_preview", False)     # وضع المعاينة للأدمين
 init_state()
 
 # ---------------- Header (Auto Logo) ----------------
@@ -206,8 +208,12 @@ with st.sidebar:
                 st.session_state.exam = data
                 st.session_state.answers = {s:{} for s in SECTIONS}
                 st.session_state.candidate_started = True
-                dur = int(data["meta"].get("duration_min", DEFAULT_DUR.get(data["meta"].get("level","B1"),60)))
-                st.session_state.deadline = datetime.utcnow() + timedelta(minutes=dur)
+                # ----- إصلاح القيمة الافتراضية للمدة -----
+                dur_default = data.get("meta", {}).get("duration_min")
+                if not isinstance(dur_default, (int, float)):
+                    lvl = data.get("meta", {}).get("level", st.session_state.candidate_level)
+                    dur_default = DEFAULT_DUR.get(lvl, 60)
+                st.session_state.deadline = datetime.utcnow() + timedelta(minutes=int(dur_default))
                 st.success(f"Loaded {os.path.basename(path)} and started.")
             else:
                 st.error("هذا المستوى غير مُحضّر بعد من الأدمين (لا يوجد ملف امتحان).")
@@ -335,14 +341,102 @@ def render_tasks_admin(section_key, title=None):
         st.info("No tasks yet.")
     render_task_editor(section_key, idx=None)
 
+# ---------------- Preview (read-only) ----------------
+def render_preview_read_only(exam: dict):
+    st.markdown("---")
+    st.subheader("👀 Preview (read-only)")
+    meta = exam.get("meta", {})
+    st.caption(f"Title: {meta.get('title','')} | Level: {meta.get('level','')} | Duration: {meta.get('duration_min','—')} min")
+    tabs = st.tabs(SECTIONS)
+
+    # Listening
+    with tabs[0]:
+        L = exam.get("listening", {})
+        if L.get("transcript"):
+            st.info(L["transcript"])
+        apath = L.get("audio_path","")
+        if apath and (MEDIA_DIR / apath).exists():
+            st.audio(str(MEDIA_DIR / apath))
+        for i, t in enumerate(L.get("tasks", [])):
+            ttype = t.get("type")
+            if ttype == "radio":
+                st.radio(t.get("q",""), t.get("options",[]), index=None, key=f"pv_L_r_{i}", disabled=True)
+            elif ttype == "checkbox":
+                st.multiselect(t.get("q",""), t.get("options",[]), key=f"pv_L_c_{i}", disabled=True)
+            elif ttype == "tfn":
+                st.radio(t.get("q",""), ["T","F","NG"], index=None, key=f"pv_L_tfn_{i}", disabled=True)
+            elif ttype == "text":
+                st.text_input(t.get("q",""), key=f"pv_L_txt_{i}", disabled=True)
+            elif ttype == "highlight":
+                opts = t.get("options",{})
+                tokens = tokenise(opts.get("text",""), opts.get("mode","word"))
+                st.multiselect(t.get("q",""), tokens, key=f"pv_L_h_{i}", disabled=True)
+
+    # Reading
+    with tabs[1]:
+        R = exam.get("reading", {})
+        if R.get("passage"): st.info(R["passage"])
+        for i, t in enumerate(R.get("tasks", [])):
+            ttype = t.get("type")
+            if ttype == "radio":
+                st.radio(t.get("q",""), t.get("options",[]), index=None, key=f"pv_R_r_{i}", disabled=True)
+            elif ttype == "checkbox":
+                st.multiselect(t.get("q",""), t.get("options",[]), key=f"pv_R_c_{i}", disabled=True)
+            elif ttype == "tfn":
+                st.radio(t.get("q",""), ["T","F","NG"], index=None, key=f"pv_R_tfn_{i}", disabled=True)
+            elif ttype == "text":
+                st.text_input(t.get("q",""), key=f"pv_R_txt_{i}", disabled=True)
+            elif ttype == "highlight":
+                opts = t.get("options",{})
+                tokens = tokenise(opts.get("text",""), opts.get("mode","word"))
+                st.multiselect(t.get("q",""), tokens, key=f"pv_R_h_{i}", disabled=True)
+
+    # Use of English
+    with tabs[2]:
+        U = exam.get("use", {})
+        for i, t in enumerate(U.get("tasks", [])):
+            ttype = t.get("type")
+            if ttype == "radio":
+                st.radio(t.get("q",""), t.get("options",[]), index=None, key=f"pv_U_r_{i}", disabled=True)
+            elif ttype == "checkbox":
+                st.multiselect(t.get("q",""), t.get("options",[]), key=f"pv_U_c_{i}", disabled=True)
+            elif ttype == "tfn":
+                st.radio(t.get("q",""), ["T","F","NG"], index=None, key=f"pv_U_tfn_{i}", disabled=True)
+            elif ttype == "text":
+                st.text_input(t.get("q",""), key=f"pv_U_txt_{i}", disabled=True)
+            elif ttype == "highlight":
+                opts = t.get("options",{})
+                tokens = tokenise(opts.get("text",""), opts.get("mode","word"))
+                st.multiselect(t.get("q",""), tokens, key=f"pv_U_h_{i}", disabled=True)
+
+    # Writing
+    with tabs[3]:
+        W = exam.get("writing", {})
+        if W.get("prompt"): st.write(W["prompt"])
+        st.text_area("Your essay (disabled)", height=200, key="pv_W", disabled=True)
+
+# ---------------- Admin Panel ----------------
 def admin_panel():
     st.markdown("---")
     st.subheader("🛡️ Admin Mode (Level-focused)")
     col1,col2,col3 = st.columns([1,1,1])
     with col1:
-        st.session_state.admin_level = st.selectbox("Level to edit", LEVELS, index=LEVELS.index(st.session_state.admin_level), key="admin_level_sel")
+        st.session_state.admin_level = st.selectbox(
+            "Level to edit", LEVELS, index=LEVELS.index(st.session_state.admin_level), key="admin_level_sel"
+        )
     with col2:
-        dur = st.number_input("Duration (minutes)", value=int(st.session_state.exam["meta"].get("duration_min", DEFAULT_DUR.get(st.session_state.admin_level,60))), min_value=10, step=5, key="admin_duration")
+        # ----- إصلاح القيمة الافتراضية للمدة -----
+        dur_default = st.session_state.exam.get("meta", {}).get("duration_min")
+        if not isinstance(dur_default, (int, float)):
+            dur_default = DEFAULT_DUR.get(st.session_state.admin_level, 60)
+        dur = st.number_input(
+            "Duration (minutes)",
+            value=int(dur_default),
+            min_value=10,
+            step=5,
+            key="admin_duration"
+        )
+        st.session_state.exam.setdefault("meta", {})
         st.session_state.exam["meta"]["duration_min"] = int(dur)
         st.session_state.exam["meta"]["level"] = st.session_state.admin_level
         st.session_state.exam["meta"]["title"] = f"Mega Formation English Exam — {st.session_state.admin_level}"
@@ -370,8 +464,10 @@ def admin_panel():
         with colx:
             if st.button("📤 Export JSON (current)"):
                 data = st.session_state.exam
-                st.download_button("Download file", data=json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
-                                   file_name=f"EXAM_{st.session_state.admin_level}.json", mime="application/json", key="dl_exam_json")
+                st.download_button("Download file",
+                    data=json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
+                    file_name=f"EXAM_{st.session_state.admin_level}.json",
+                    mime="application/json", key="dl_exam_json")
         with coly:
             up_json = st.file_uploader("📥 Import JSON (replace current)", type=["json"], key="import_exam_json")
             if up_json:
@@ -444,6 +540,14 @@ def admin_panel():
         lvl = st.session_state.admin_level
         save_json(exam_path_for(lvl), sample_exam(lvl))
         st.success(f"Sample exam created → exams/EXAM_{lvl}.json")
+
+    # ------- زر Preview Exam -------
+    st.markdown("### 👀 Preview")
+    if st.button("🔎 Preview Exam (read-only)"):
+        st.session_state.show_preview = True
+
+    if st.session_state.show_preview:
+        render_preview_read_only(st.session_state.exam)
 
 # ---------------- Admin Results Viewer ----------------
 def admin_results_viewer():
@@ -549,7 +653,7 @@ def render_candidate():
             elif ttype=="text":
                 st.session_state.answers["Use of English"][i]=st.text_input(t["q"], key=key)
             elif ttype=="highlight":
-                opts=t.get("options",{}); tokens=tokenise(opts.get("text",""), opts.get("mode","word"))
+                opts=t.get("options",{}); tokens=tokenise(opts.get("text",""), t.get("mode","word"))
                 max_sel=int(opts.get("max_select",3))
                 st.write(t["q"])
                 selected=st.multiselect(f"Select up to {max_sel} {opts.get('mode','word')}(s):", tokens, key=key, max_selections=max_sel)
