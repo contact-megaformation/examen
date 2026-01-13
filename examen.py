@@ -1,10 +1,11 @@
 # examen.py
 # ------------------------------------------------------------------
-# Mega Formation — Exam System (Excel Question Bank + Employee Builder + Candidate OTP + Admin Results)
-# - Employee builds questions from UI -> saved to data/exam_bank.xlsx (no loss next time)
-# - Candidate login: phone + one-time OTP (issued by employee)
+# Mega Formation — Exams (Excel Bank + Employee Builder + Admin Candidate Accounts + Admin Results)
+# - Employee builds questions from UI -> saved to data/exam_bank.xlsx (persistent)
+# - Admin creates Candidate accounts: phone + password + level + branch (single-use)
+# - Candidate login: phone + password
 # - Candidate never sees score; only final message
-# - Admin sees results dashboard only
+# - Admin sees results + can manage candidates
 # ------------------------------------------------------------------
 
 import streamlit as st
@@ -12,7 +13,7 @@ import pandas as pd
 import os, re, time, hashlib, uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
@@ -27,9 +28,9 @@ DATA_DIR.mkdir(exist_ok=True)
 MEDIA_DIR.mkdir(exist_ok=True)
 RESULTS_DIR.mkdir(exist_ok=True)
 
-BANK_XLSX  = DATA_DIR / "exam_bank.xlsx"
-USERS_XLSX = DATA_DIR / "users.xlsx"
-OTPS_CSV   = DATA_DIR / "otps.csv"
+BANK_XLSX      = DATA_DIR / "exam_bank.xlsx"
+USERS_XLSX     = DATA_DIR / "users.xlsx"               # admin/employee
+CANDIDATES_XLSX= DATA_DIR / "candidates.xlsx"          # phone/pass/level/branch/single-use status
 
 # ---------------- Constants ----------------
 LEVELS   = ["A1","A2","B1","B2"]
@@ -37,20 +38,22 @@ SECTIONS = ["Listening","Reading","Use of English","Writing"]
 BRANCHES = {"Menzel Bourguiba":"MB", "Bizerte":"BZ"}
 DEFAULT_DUR = {"A1":60, "A2":60, "B1":90, "B2":90}
 
-PASS_MARK = 60.0  # النجاح من 60/100 (تبدّلها كي تحب)
+PASS_MARK = 60.0  # النجاح من 60/100 (تنجم تبدّلها)
 
 RESULT_PATHS = {
     "MB": RESULTS_DIR / "results_MB.csv",
     "BZ": RESULTS_DIR / "results_BZ.csv"
 }
 
-OTP_MINUTES_VALID = 30
-
+# Excel sheets/cols
 Q_COLS = [
     "QID","Level","Section","Type","Question","Options","Answer",
     "SourceText","Mode","MaxSelect","MinWords","MaxWords","Keywords","UpdatedAt"
 ]
 META_COLS = ["Level","Key","Value"]
+
+# Candidate accounts
+CAND_COLS = ["phone","pass_hash","level","branch","created_at","last_login_at","used_at","is_used","created_by"]
 
 # ---------------- Utils ----------------
 def now_iso() -> str:
@@ -60,13 +63,25 @@ def sha256(s: str) -> str:
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
 def clean_phone(p: str) -> str:
+    """Normalize UAE-style numbers to +9715xxxxxxxx when possible."""
     p = (p or "").strip()
     p = re.sub(r"[^\d+]", "", p)
+
+    # UAE normalization helpers
+    if p.startswith("05") and len(p) == 10:
+        p = "+971" + p[1:]          # 05xxxxxxxx -> +9715xxxxxxxx
+    elif p.startswith("5") and len(p) == 9:
+        p = "+971" + p              # 5xxxxxxxx -> +9715xxxxxxxx
+    elif p.startswith("971") and not p.startswith("+"):
+        p = "+" + p                 # 9715xxxxxxx -> +9715xxxxxxx
+
     return p
 
-def make_otp(length=6) -> str:
-    import random
-    return "".join(str(random.randint(0, 9)) for _ in range(length))
+def make_password(length=8) -> str:
+    """Simple random password (letters+digits)."""
+    import random, string
+    chars = string.ascii_letters + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
 
 def pipe_join(val) -> str:
     if val is None:
@@ -94,7 +109,7 @@ def tokenise(text: str, mode: str):
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sentences if s.strip()]
 
-# ---------------- Excel Bank ----------------
+# ---------------- Excel Bank (Questions + Meta) ----------------
 def ensure_bank_file():
     if BANK_XLSX.exists():
         return
@@ -138,13 +153,13 @@ def meta_get(level: str, key: str, default=""):
     sub = dfm[(dfm["Level"].astype(str).str.strip() == level) & (dfm["Key"].astype(str).str.strip() == key)]
     if sub.empty:
         return default
-    return str(sub.iloc[-1]["Value"]).strip() if str(sub.iloc[-1]["Value"]).strip() else default
+    v = str(sub.iloc[-1]["Value"]).strip()
+    return v if v else default
 
 def meta_set(level: str, key: str, value: str):
     dfm = load_bank_meta()
     level = level.strip()
     key = key.strip()
-    # remove existing same key+level, append latest
     dfm = dfm[~((dfm["Level"].astype(str).str.strip() == level) & (dfm["Key"].astype(str).str.strip() == key))]
     dfm = pd.concat([dfm, pd.DataFrame([{"Level":level, "Key":key, "Value":str(value)}])], ignore_index=True)
     dfq = load_bank_questions()
@@ -179,7 +194,7 @@ def delete_question_qid(qid: str):
     dfm = load_bank_meta()
     save_bank(dfq, dfm)
 
-def load_exam_from_excel(level: str) -> Dict[str, Any] | None:
+def load_exam_from_excel(level: str) -> Optional[Dict[str, Any]]:
     dfq = load_bank_questions()
     sub = dfq[dfq["Level"].astype(str).str.strip() == level].copy()
     if sub.empty:
@@ -259,7 +274,6 @@ def load_exam_from_excel(level: str) -> Dict[str, Any] | None:
 def ensure_users_file():
     if USERS_XLSX.exists():
         return
-    # default users
     df = pd.DataFrame([
         {"username":"admin",    "pass_hash":sha256("megaadmin"), "role":"admin"},
         {"username":"employee", "pass_hash":sha256("mega123"),   "role":"employee"},
@@ -287,67 +301,81 @@ def verify_user(username: str, password: str):
         return None
     return str(hit.iloc[0]["role"])
 
-# ---------------- OTP storage ----------------
-def load_otps() -> pd.DataFrame:
-    if OTPS_CSV.exists():
-        try:
-            return pd.read_csv(OTPS_CSV).fillna("")
-        except Exception:
-            pass
-    return pd.DataFrame(columns=["phone","otp_hash","level","branch","issued_by","created_at","expires_at","used_at","is_used"])
+# ---------------- Candidate accounts ----------------
+def ensure_candidates_file():
+    if CANDIDATES_XLSX.exists():
+        return
+    df = pd.DataFrame(columns=CAND_COLS)
+    with pd.ExcelWriter(CANDIDATES_XLSX, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name="Candidates", index=False)
 
-def save_otps(df: pd.DataFrame):
-    df.to_csv(OTPS_CSV, index=False)
+def load_candidates() -> pd.DataFrame:
+    ensure_candidates_file()
+    try:
+        df = pd.read_excel(CANDIDATES_XLSX, sheet_name="Candidates").fillna("")
+    except Exception:
+        df = pd.DataFrame(columns=CAND_COLS)
+    for c in CAND_COLS:
+        if c not in df.columns:
+            df[c] = ""
+    return df[CAND_COLS].fillna("")
 
-def issue_otp(phone: str, level: str, branch: str, issued_by: str):
+def save_candidates(df: pd.DataFrame):
+    df = df.fillna("")
+    with pd.ExcelWriter(CANDIDATES_XLSX, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name="Candidates", index=False)
+
+def admin_create_candidate(phone: str, level: str, branch: str, created_by: str, pass_plain: Optional[str]=None) -> str:
     phone = clean_phone(phone)
-    otp = make_otp(6)
-    created = datetime.now()
-    expires = created + timedelta(minutes=OTP_MINUTES_VALID)
+    pwd = pass_plain or make_password(8)
+    df = load_candidates()
 
-    df = load_otps()
+    # overwrite existing for same phone (reset)
+    df = df[df["phone"].astype(str).str.strip() != phone].copy()
+
     row = {
         "phone": phone,
-        "otp_hash": sha256(otp),
+        "pass_hash": sha256(pwd),
         "level": level,
         "branch": branch,
-        "issued_by": issued_by,
-        "created_at": created.isoformat(timespec="seconds"),
-        "expires_at": expires.isoformat(timespec="seconds"),
+        "created_at": now_iso(),
+        "last_login_at": "",
         "used_at": "",
-        "is_used": "0"
+        "is_used": "0",       # single-use account; set to 1 after submit
+        "created_by": created_by
     }
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-    save_otps(df)
-    return otp
+    save_candidates(df)
+    return pwd
 
-def validate_and_consume_otp(phone: str, otp: str):
+def verify_candidate_login(phone: str, password: str):
     phone = clean_phone(phone)
-    df = load_otps()
-    if df.empty:
-        return None, "OTP غير موجود."
+    df = load_candidates()
+    ph = sha256(password or "")
+    hit = df[(df["phone"].astype(str).str.strip() == phone) & (df["pass_hash"].astype(str).str.strip() == ph)]
+    if hit.empty:
+        return None, "Login غالط."
+    row = hit.iloc[-1].to_dict()
 
-    otp_h = sha256(otp)
-    cand = df[(df["phone"] == phone) & (df["otp_hash"] == otp_h) & (df["is_used"].astype(str) == "0")]
-    if cand.empty:
-        return None, "OTP غالط أو مستعمل."
+    if str(row.get("is_used","0")) == "1":
+        return None, "هذا الحساب مستعمل قبل (Single-use)."
 
-    idx = cand.index[-1]
-    exp = df.loc[idx, "expires_at"]
-    try:
-        exp_dt = datetime.fromisoformat(str(exp))
-    except Exception:
-        return None, "OTP فيه مشكلة في الصلاحية."
+    # update last_login_at
+    idx = hit.index[-1]
+    df.loc[idx, "last_login_at"] = now_iso()
+    save_candidates(df)
 
-    if datetime.now() > exp_dt:
-        return None, "OTP منتهي الصلوحية."
-
-    df.loc[idx, "is_used"] = "1"
-    df.loc[idx, "used_at"] = now_iso()
-    save_otps(df)
-
-    payload = {"level": str(df.loc[idx, "level"]), "branch": str(df.loc[idx, "branch"])}
+    payload = {"phone": phone, "level": str(row.get("level","B1")), "branch": str(row.get("branch","MB"))}
     return payload, None
+
+def mark_candidate_used(phone: str):
+    phone = clean_phone(phone)
+    df = load_candidates()
+    mask = (df["phone"].astype(str).str.strip() == phone)
+    if mask.any():
+        df.loc[mask, "is_used"] = "1"
+        df.loc[mask, "used_at"] = now_iso()
+        save_candidates(df)
 
 # ---------------- Scoring ----------------
 def score_item_pct(item, user_val):
@@ -425,7 +453,7 @@ with c1:
         st.markdown("🧭 **Mega Formation**")
 with c2:
     st.markdown("<h2 style='margin:0'>Mega Formation — English Exams</h2>", unsafe_allow_html=True)
-    st.caption("Employee builds questions → saved to Excel | Candidate OTP | Admin results")
+    st.caption("Employee builds questions → Excel | Admin creates candidate passwords | Admin results")
 
 # ---------------- Sidebar: Login ----------------
 with st.sidebar:
@@ -459,14 +487,14 @@ with st.sidebar:
 
     with tab_cand:
         phone = st.text_input("Phone", key="cand_phone")
-        otp   = st.text_input("One-time password (OTP)", type="password", key="cand_otp")
+        pwd   = st.text_input("Password", type="password", key="cand_pwd")
         if st.button("Login Candidate", key="cand_login"):
-            payload, err = validate_and_consume_otp(phone, otp)
+            payload, err = verify_candidate_login(phone, pwd)
             if err:
                 st.error(err)
             else:
                 st.session_state.candidate_ok = True
-                st.session_state.candidate_payload = {"phone": clean_phone(phone), **payload}
+                st.session_state.candidate_payload = payload
                 st.success("OK ✅ You can start the exam now.")
 
     if st.session_state.role in ("admin","employee"):
@@ -539,7 +567,6 @@ def row_from_writing(level: str, writing: Dict[str, Any]) -> Dict[str, Any]:
 def load_exam_for_edit(level: str) -> Dict[str, Any]:
     exam = load_exam_from_excel(level)
     if not exam:
-        # create fresh skeleton
         exam = {
             "meta": {"title": f"Mega Formation English Exam — {level}", "level": level, "duration_min": DEFAULT_DUR.get(level,60), "exam_id": f"EXCEL_{level}"},
             "listening": {"audio_path": "", "transcript": "", "tasks": []},
@@ -558,11 +585,8 @@ def save_exam_to_excel(level: str, exam: Dict[str, Any]):
 
     upsert_questions(rows)
 
-    # save meta too
     meta_set(level, "title", exam["meta"].get("title", f"Mega Formation English Exam — {level}"))
     meta_set(level, "duration_min", str(exam["meta"].get("duration_min", DEFAULT_DUR.get(level,60))))
-
-    # listening + reading meta
     meta_set(level, "listening_audio", exam.get("listening", {}).get("audio_path",""))
     meta_set(level, "listening_transcript", exam.get("listening", {}).get("transcript",""))
     meta_set(level, "reading_passage", exam.get("reading", {}).get("passage",""))
@@ -571,9 +595,7 @@ def render_task_editor(level: str, section_key: str, tasks: List[Dict[str, Any]]
     TYPES = ["radio","checkbox","text","tfn","highlight"]
     MODES = ["word","sentence"]
 
-    box = st.container(border=True)
-
-    with box:
+    with st.container(border=True):
         if idx is None:
             st.subheader(f"{section_key} — Add task")
             itype = st.selectbox("Type", TYPES, key=f"{section_key}_new_type")
@@ -627,7 +649,9 @@ def render_task_editor(level: str, section_key: str, tasks: List[Dict[str, Any]]
             correct = data.get("answer", [])
 
             if itype in ("radio","checkbox"):
-                opts_raw = st.text_area("Options (one per line)", value="\n".join(options if isinstance(options,list) else []), key=f"{section_key}_edit_opts_{idx}")
+                opts_raw = st.text_area("Options (one per line)",
+                                        value="\n".join(options if isinstance(options,list) else []),
+                                        key=f"{section_key}_edit_opts_{idx}")
                 options  = [o.strip() for o in opts_raw.splitlines() if o.strip()]
                 if itype == "radio":
                     ix = options.index(correct) if (correct in options) else (0 if options else 0)
@@ -642,10 +666,7 @@ def render_task_editor(level: str, section_key: str, tasks: List[Dict[str, Any]]
                 correct = st.selectbox("Correct", options, index=ix, key=f"{section_key}_edit_corr_tfn_{idx}")
 
             elif itype == "text":
-                if isinstance(correct, list):
-                    kw_txt = ", ".join(correct)
-                else:
-                    kw_txt = ""
+                kw_txt = ", ".join(correct) if isinstance(correct, list) else ""
                 kw_raw = st.text_input("Keywords (comma-separated)", value=kw_txt, key=f"{section_key}_edit_corr_txt_{idx}")
                 options = []
                 correct = [k.strip() for k in kw_raw.split(",") if k.strip()]
@@ -667,11 +688,11 @@ def render_task_editor(level: str, section_key: str, tasks: List[Dict[str, Any]]
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("💾 Save task", key=f"{section_key}_save_{idx}"):
-                    tasks[idx] = {"qid": data.get("qid") or str(uuid.uuid4()), "type": itype, "q": q.strip(), "options": options, "answer": correct}
+                    tasks[idx] = {"qid": data.get("qid") or str(uuid.uuid4()),
+                                  "type": itype, "q": q.strip(), "options": options, "answer": correct}
                     st.success("Saved ✅")
             with c2:
                 if st.button("🗑️ Delete task", key=f"{section_key}_del_{idx}"):
-                    # delete from excel immediately if has QID
                     qid = data.get("qid")
                     if qid:
                         delete_question_qid(qid)
@@ -679,33 +700,11 @@ def render_task_editor(level: str, section_key: str, tasks: List[Dict[str, Any]]
                     st.warning("Deleted ⚠️")
 
 def employee_panel():
-    st.subheader("👩‍💼 Employee Panel")
-
-    # OTP issuing
-    st.markdown("### 1) Generate OTP for Candidate (one-time)")
-    c1,c2,c3 = st.columns(3)
-    with c1:
-        phone = st.text_input("Candidate phone", key="otp_phone")
-    with c2:
-        lvl = st.selectbox("Level", LEVELS, key="otp_lvl")
-    with c3:
-        br = st.selectbox("Branch", list(BRANCHES.keys()), key="otp_br")
-
-    if st.button("Generate OTP", type="primary", key="gen_otp_btn"):
-        if not clean_phone(phone):
-            st.error("اكتب رقم الهاتف صحيح.")
-        else:
-            otp = issue_otp(phone, lvl, BRANCHES[br], st.session_state.user)
-            st.success("OTP generated ✅ (give it to candidate)")
-            st.code(f"Phone: {clean_phone(phone)}\nOTP: {otp}\nValid: {OTP_MINUTES_VALID} minutes\nLevel: {lvl}\nBranch: {BRANCHES[br]}")
-
-    st.markdown("---")
-    st.markdown("### 2) Build / Edit Exam Questions")
+    st.subheader("👩‍💼 Employee Panel — Builder")
 
     level = st.selectbox("Level to edit", LEVELS, key="emp_edit_level")
     exam = load_exam_for_edit(level)
 
-    # Meta controls
     st.markdown("#### Exam meta")
     cA,cB = st.columns([2,1])
     with cA:
@@ -715,7 +714,6 @@ def employee_panel():
                                                        value=int(exam["meta"].get("duration_min", DEFAULT_DUR.get(level,60))),
                                                        key="meta_dur")
 
-    # Listening meta + audio upload
     st.markdown("#### Listening meta")
     exam["listening"]["transcript"] = st.text_area("Listening transcript (optional)",
                                                    value=exam["listening"].get("transcript",""),
@@ -731,14 +729,12 @@ def employee_panel():
     if exam["listening"].get("audio_path") and (MEDIA_DIR / exam["listening"]["audio_path"]).exists():
         st.audio(str(MEDIA_DIR / exam["listening"]["audio_path"]))
 
-    # Reading meta
     st.markdown("#### Reading meta")
     exam["reading"]["passage"] = st.text_area("Reading passage",
                                               value=exam["reading"].get("passage",""),
                                               key="reading_passage")
 
     st.markdown("---")
-    # Tasks editors
     st.markdown("### Listening Tasks")
     tasksL = exam["listening"]["tasks"]
     for i, t in enumerate(tasksL):
@@ -774,30 +770,96 @@ def employee_panel():
         save_exam_to_excel(level, exam)
         st.success(f"Saved ✅ → data/exam_bank.xlsx (Level {level})")
 
-    st.caption("ملاحظة: Delete task يمسحها من Excel مباشرة (بالـ QID).")
+# ---------------- Admin Panel (Candidates + Results) ----------------
+def admin_panel():
+    st.subheader("🛡️ Admin Panel")
 
-# ---------------- Admin Dashboard (results only) ----------------
-def admin_dashboard():
-    st.subheader("🛡️ Admin Dashboard — Results Only")
+    tab_cands, tab_results = st.tabs(["👥 Candidates", "📊 Results"])
 
-    sel_branch = st.selectbox("Branch", list(BRANCHES.keys()), key="adm_branch_sel")
-    bcode = BRANCHES[sel_branch]
-    path = RESULT_PATHS[bcode]
+    with tab_cands:
+        st.markdown("### Create candidate login (Phone + Password)")
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            phone = st.text_input("Candidate phone", key="adm_cand_phone")
+        with c2:
+            lvl = st.selectbox("Level", LEVELS, key="adm_cand_level")
+        with c3:
+            br = st.selectbox("Branch", list(BRANCHES.keys()), key="adm_cand_branch")
 
-    df = results_df(path)
-    if df.empty:
-        st.warning("No results yet.")
-        return
+        colA, colB = st.columns([1,1])
+        with colA:
+            auto_pw = st.checkbox("Auto-generate password", value=True, key="adm_auto_pw")
+        with colB:
+            manual_pw = st.text_input("Manual password (if not auto)", type="password", key="adm_manual_pw")
 
-    st.dataframe(df.sort_values("timestamp", ascending=False), use_container_width=True)
-    st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode("utf-8"), f"results_{bcode}.csv", "text/csv")
+        if st.button("Create / Reset Candidate", type="primary", key="adm_create_cand"):
+            p = clean_phone(phone)
+            if not p:
+                st.error("اكتب رقم هاتف صحيح.")
+            else:
+                pwd = admin_create_candidate(
+                    phone=p,
+                    level=lvl,
+                    branch=BRANCHES[br],
+                    created_by=st.session_state.user,
+                    pass_plain=(None if auto_pw else manual_pw)
+                )
+                st.success("Candidate created ✅ (give phone+password to the candidate)")
+                st.code(f"Phone: {p}\nPassword: {pwd}\nLevel: {lvl}\nBranch: {BRANCHES[br]}\nSingle-use: YES (locks after submit)")
+
+        st.markdown("---")
+        dfc = load_candidates()
+        if dfc.empty:
+            st.info("No candidates yet.")
+        else:
+            # small view
+            view = dfc.copy()
+            view["status"] = view["is_used"].apply(lambda x: "USED" if str(x)=="1" else "ACTIVE")
+            st.dataframe(view.sort_values("created_at", ascending=False), use_container_width=True, height=280)
+
+            st.markdown("### Mark candidate as ACTIVE again (unlock) or delete")
+            c1,c2,c3 = st.columns([2,1,1])
+            with c1:
+                target = st.text_input("Phone to manage", key="adm_manage_phone")
+            with c2:
+                if st.button("Unlock (set ACTIVE)", key="adm_unlock"):
+                    p = clean_phone(target)
+                    df = load_candidates()
+                    mask = (df["phone"].astype(str).str.strip() == p)
+                    if mask.any():
+                        df.loc[mask, "is_used"] = "0"
+                        df.loc[mask, "used_at"] = ""
+                        save_candidates(df)
+                        st.success("Unlocked ✅")
+                    else:
+                        st.error("Phone not found.")
+            with c3:
+                if st.button("Delete", key="adm_delete"):
+                    p = clean_phone(target)
+                    df = load_candidates()
+                    df = df[df["phone"].astype(str).str.strip() != p].copy()
+                    save_candidates(df)
+                    st.warning("Deleted.")
+
+    with tab_results:
+        st.markdown("### Results dashboard")
+        sel_branch = st.selectbox("Branch", list(BRANCHES.keys()), key="adm_branch_sel")
+        bcode = BRANCHES[sel_branch]
+        path = RESULT_PATHS[bcode]
+
+        df = results_df(path)
+        if df.empty:
+            st.warning("No results yet.")
+        else:
+            st.dataframe(df.sort_values("timestamp", ascending=False), use_container_width=True)
+            st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode("utf-8"), f"results_{bcode}.csv", "text/csv")
 
 # ---------------- Candidate Exam ----------------
 def render_candidate():
     st.subheader("🎓 Candidate Exam")
 
     if not st.session_state.candidate_ok:
-        st.info("سجّل الدخول بالـ Phone + OTP من الشريط الجانبي.")
+        st.info("سجّل الدخول بالـ Phone + Password من الشريط الجانبي (يوفرهم الأدمين).")
         return
 
     payload = st.session_state.candidate_payload or {}
@@ -826,7 +888,6 @@ def render_candidate():
         return
 
     exam = st.session_state.exam
-    meta = exam["meta"]
 
     # timer
     if st.session_state.deadline:
@@ -942,7 +1003,7 @@ def render_candidate():
             "phone": phone,
             "branch": bcode,
             "level": level,
-            "exam_id": meta.get("exam_id",""),
+            "exam_id": exam["meta"].get("exam_id",""),
             "overall": overall,
             "pass": passed,
             "Listening": L_pct,
@@ -952,11 +1013,16 @@ def render_candidate():
         }
         save_result_row(bcode, row)
 
-        # lock candidate view
+        # lock candidate account (single-use)
+        mark_candidate_used(phone)
+
+        # reset local session
         st.session_state.candidate_started = False
         st.session_state.deadline = None
         st.session_state.exam = None
         st.session_state.answers = {s:{} for s in SECTIONS}
+        st.session_state.candidate_ok = False
+        st.session_state.candidate_payload = None
 
         # candidate sees only this
         st.success("✅ تم الإجتياز بنجاح، سيتم التواصل معك من قبل إدارة الهيكل.")
@@ -966,6 +1032,6 @@ def render_candidate():
 if st.session_state.role == "employee":
     employee_panel()
 elif st.session_state.role == "admin":
-    admin_dashboard()
+    admin_panel()
 else:
     render_candidate()
