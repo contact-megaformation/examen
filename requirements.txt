@@ -1,5 +1,7 @@
 streamlit
 pandas
-pyttsx3
-gTTS
-openpyxl
+gspread
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+
