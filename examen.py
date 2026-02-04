@@ -260,13 +260,13 @@ def bootstrap_and_load_all():
     ws_ensure(SHEET_RES_BZ, RESULT_COLS)
 
     dfU = ws_read_df(SHEET_USERS, USERS_COLS)
-if dfU.empty:
-    seed = pd.DataFrame([
-        {"username": DEFAULT_ADMIN_USER, "pass_hash": DEFAULT_ADMIN_PASS, "role": "admin", "updated_at": now_iso()},
-        {"username": DEFAULT_EMP_USER,   "pass_hash": DEFAULT_EMP_PASS,   "role": "employee", "updated_at": now_iso()},
-    ])
-    ws_write_df(SHEET_USERS, seed, USERS_COLS)
-    dfU = ws_read_df(SHEET_USERS, USERS_COLS)
+    if dfU.empty:
+        seed = pd.DataFrame([
+            {"username": DEFAULT_ADMIN_USER, "pass_hash": DEFAULT_ADMIN_PASS, "role": "admin", "updated_at": now_iso()},
+            {"username": DEFAULT_EMP_USER,   "pass_hash": DEFAULT_EMP_PASS,   "role": "employee", "updated_at": now_iso()},
+        ])
+        ws_write_df(SHEET_USERS, seed, USERS_COLS)
+        dfU = ws_read_df(SHEET_USERS, USERS_COLS)
 
 
     dfC = ws_read_df(SHEET_CANDIDATES, CAND_COLS)
@@ -1093,4 +1093,5 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
