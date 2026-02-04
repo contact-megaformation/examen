@@ -50,7 +50,7 @@ Q_COLS = [
     "SourceText","Mode","MaxSelect","MinWords","MaxWords","Keywords","UpdatedAt"
 ]
 META_COLS = ["Level","Key","Value"]
-USERS_COLS = ["username","pass_hash","role"]
+USERS_COLS = ["username", "pass_hash", "role", "updated_at"]
 CAND_COLS  = ["phone","pass_hash","level","branch","created_at","last_login_at","used_at","is_used","created_by"]
 
 RESULT_COLS = [
@@ -260,13 +260,14 @@ def bootstrap_and_load_all():
     ws_ensure(SHEET_RES_BZ, RESULT_COLS)
 
     dfU = ws_read_df(SHEET_USERS, USERS_COLS)
-    if dfU.empty:
-        seed = pd.DataFrame([
-            {"username": DEFAULT_ADMIN_USER, "pass_hash": sha256(DEFAULT_ADMIN_PASS), "role": "admin"},
-            {"username": DEFAULT_EMP_USER,   "pass_hash": sha256(DEFAULT_EMP_PASS),   "role": "employee"},
-        ])
-        ws_write_df(SHEET_USERS, seed, USERS_COLS)
-        dfU = ws_read_df(SHEET_USERS, USERS_COLS)
+if dfU.empty:
+    seed = pd.DataFrame([
+        {"username": DEFAULT_ADMIN_USER, "pass_hash": DEFAULT_ADMIN_PASS, "role": "admin", "updated_at": now_iso()},
+        {"username": DEFAULT_EMP_USER,   "pass_hash": DEFAULT_EMP_PASS,   "role": "employee", "updated_at": now_iso()},
+    ])
+    ws_write_df(SHEET_USERS, seed, USERS_COLS)
+    dfU = ws_read_df(SHEET_USERS, USERS_COLS)
+
 
     dfC = ws_read_df(SHEET_CANDIDATES, CAND_COLS)
     dfQ = ws_read_df(SHEET_QUESTIONS, Q_COLS)
@@ -455,15 +456,33 @@ def save_exam_to_sheets(level: str, exam: Dict[str, Any]):
     dfM = meta_set(dfM, level, "reading_passage", exam.get("reading", {}).get("passage",""))
 
 # ---------------- Users login ----------------
+def _looks_like_sha256(x: str) -> bool:
+    x = (x or "").strip().lower()
+    return bool(re.fullmatch(r"[0-9a-f]{64}", x))
+
 def verify_user(username: str, password: str) -> Optional[str]:
     df = ws_read_df(SHEET_USERS, USERS_COLS)
+
     u = (username or "").strip()
-    ph = sha256(password or "")
-    hit = df[(df["username"].astype(str) == u) & (df["pass_hash"].astype(str) == ph)]
+    pw = (password or "").strip()
+    pw_hash = sha256(pw)
+
+    hit = df[df["username"].astype(str).str.strip() == u].copy()
     if hit.empty:
         return None
-    return str(hit.iloc[0]["role"]).strip()
 
+    stored = str(hit.iloc[0].get("pass_hash", "")).strip()
+
+    ok = False
+    if _looks_like_sha256(stored):
+        ok = (stored == pw_hash)
+    else:
+        ok = (stored == pw)
+
+    if not ok:
+        return None
+
+    return str(hit.iloc[0].get("role", "")).strip() or None
 # ---------------- Candidates ----------------
 def admin_create_candidate(phone: str, level: str, branch: str, created_by: str, pass_plain: Optional[str]=None) -> str:
     phone = clean_phone(phone)
@@ -1074,3 +1093,4 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
