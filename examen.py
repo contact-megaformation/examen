@@ -166,10 +166,33 @@ def ws_write_df(ws, df: pd.DataFrame, headers: List[str]):
     for h in headers:
         if h not in df.columns:
             df[h] = ""
-    df = df[headers].fillna("")
-    data = [headers] + df.astype(str).values.tolist()
-    ws.clear()
-    ws.update(data)
+    df = df[headers].fillna("").astype(str)
+
+    new_data = [headers] + df.values.tolist()
+
+    # ✅ Get old used size (to overwrite leftovers without ws.clear())
+    try:
+        old_values = ws.get_all_values()
+        old_r = len(old_values) if old_values else 1
+        old_c = max((len(r) for r in old_values), default=len(headers))
+    except Exception:
+        old_r, old_c = 1, len(headers)
+
+    new_r = len(new_data)
+    new_c = max(len(headers), max((len(r) for r in new_data), default=len(headers)))
+
+    target_r = max(old_r, new_r)
+    target_c = max(old_c, new_c)
+
+    # Build full matrix to overwrite entire old area
+    matrix = [["" for _ in range(target_c)] for __ in range(target_r)]
+    for i, row in enumerate(new_data):
+        for j, val in enumerate(row):
+            matrix[i][j] = val
+
+    # ✅ Single update (no clear)
+    ws.update("A1", matrix)
+
 
 # ---------------- Bootstrap ----------------
 @st.cache_data(ttl=600)
@@ -1075,3 +1098,4 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
