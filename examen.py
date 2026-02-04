@@ -1,91 +1,79 @@
 # examen.py
 # ------------------------------------------------------------------
-# Mega Formation — Exams (100% Google Sheets / Single Spreadsheet)
-# ✅ Everything stored in ONE Google Spreadsheet (worksheets):
-#   - Questions     (bank)
-#   - Meta          (exam meta: title/duration/audio/passage)
-#   - Users         (admin/employee accounts)
-#   - Candidates    (candidate single-use accounts)
-#   - Results_MB    (results for MB)
-#   - Results_BZ    (results for BZ)
+# Mega Formation — Exams (Google Sheets 100%)
+# Single Spreadsheet with worksheets:
+#   - Users        (username, password, role)
+#   - Candidates   (phone, password, level, branch, created_at, last_login_at, used_at, is_used, created_by)
+#   - Questions    (question bank for all levels)
+#   - Meta         (meta per level: title, duration, passages, audio...)
+#   - Results_MB   (results rows)
+#   - Results_BZ   (results rows)
 #
-# ✅ Employee builds questions from UI -> saved to Questions/Meta
-# ✅ Admin creates Candidate accounts: phone + password + level + branch (single-use)
-# ✅ Candidate login: phone + password (single-use)
-# ✅ Candidate never sees score; only final message
-# ✅ Admin sees results + can download
+# Roles:
+#   - Employee: builds exam in UI -> stored in Questions+Meta
+#   - Admin: creates Candidate accounts (single-use) + views results
+#   - Candidate: takes exam, never sees score; admin sees results
+#
+# Passwords are PLAIN TEXT (as requested).
+# Defaults:
+#   admin / megaadminn
+#   employee / mega123
 # ------------------------------------------------------------------
 
-import re, json, time, uuid, hashlib
+import os, re, time, uuid
+import streamlit as st
+import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 
-import streamlit as st
-import pandas as pd
-
-# ====== Google Sheets ======
+# ---- Google Sheets ----
 import gspread
 from google.oauth2.service_account import Credentials
 
-
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
-
-
-# ---------------- Secrets / Defaults ----------------
-# You can override these from Streamlit secrets.
-SPREADSHEET_ID = st.secrets.get("SPREADSHEET_ID", "").strip()
-
-DEFAULT_ADMIN_USER = st.secrets.get("DEFAULT_ADMIN_USER", "admin")
-DEFAULT_ADMIN_PASS = st.secrets.get("DEFAULT_ADMIN_PASS", "megaadmin")
-DEFAULT_EMP_USER   = st.secrets.get("DEFAULT_EMP_USER", "employee")
-DEFAULT_EMP_PASS   = st.secrets.get("DEFAULT_EMP_PASS", "mega123")
-
 
 # ---------------- Constants ----------------
 LEVELS   = ["A1","A2","B1","B2"]
 SECTIONS = ["Listening","Reading","Use of English","Writing"]
 BRANCHES = {"Menzel Bourguiba":"MB", "Bizerte":"BZ"}
 DEFAULT_DUR = {"A1":60, "A2":60, "B1":90, "B2":90}
+PASS_MARK = 60.0  # نجاح من 60/100
 
-PASS_MARK = 60.0
+# ---- Defaults requested ----
+DEFAULT_ADMIN_USER = "admin"
+DEFAULT_ADMIN_PASS = "megaadminn"  # ✅ كما طلبت
+DEFAULT_EMP_USER   = "employee"
+DEFAULT_EMP_PASS   = "mega123"     # ✅ كما طلبت
 
+# ---- Worksheet Names ----
+WS_USERS      = "Users"
+WS_CAND       = "Candidates"
 WS_QUESTIONS  = "Questions"
 WS_META       = "Meta"
-WS_USERS      = "Users"
-WS_CANDIDATES = "Candidates"
-WS_RESULTS_MB = "Results_MB"
-WS_RESULTS_BZ = "Results_BZ"
+WS_RES_MB     = "Results_MB"
+WS_RES_BZ     = "Results_BZ"
 
-RESULT_SHEETS = {"MB": WS_RESULTS_MB, "BZ": WS_RESULTS_BZ}
+# ---- Column Schemas ----
+USERS_COLS = ["username","password","role"]
 
-# Questions sheet columns
+CAND_COLS  = ["phone","password","level","branch","created_at","last_login_at","used_at","is_used","created_by"]
+
 Q_COLS = [
     "QID","Level","Section","Type","Question","Options","Answer",
     "SourceText","Mode","MaxSelect","MinWords","MaxWords","Keywords","UpdatedAt"
 ]
 META_COLS = ["Level","Key","Value"]
 
-# Users sheet columns
-USER_COLS = ["username","pass_hash","role","created_at"]
-
-# Candidates sheet columns
-CAND_COLS = ["phone","pass_hash","level","branch","created_at","last_login_at","used_at","is_used","created_by"]
-
-# Results sheet columns
 RES_COLS = ["timestamp","name","phone","branch","level","exam_id","overall","pass",
             "Listening","Reading","Use_of_English","Writing"]
-
 
 # ---------------- Utils ----------------
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
-def sha256(s: str) -> str:
-    return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
-
 def clean_phone(p: str) -> str:
-    """Normalize UAE-style numbers to +9715xxxxxxxx when possible. (Candidate phones)"""
+    """Normalize UAE-style numbers to +9715xxxxxxxx when possible."""
     p = (p or "").strip()
     p = re.sub(r"[^\d+]", "", p)
 
@@ -124,149 +112,225 @@ def tokenise(text: str, mode: str):
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sentences if s.strip()]
 
-
-# ===================== Google Sheets (Robust Auth) =====================
-GS_SCOPES = [
+# ---------------- Google Sheets: Auth + IO ----------------
+SCOPE = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/drive"
 ]
 
-def _load_sa_info_from_secrets() -> Dict[str, Any]:
-    sa = st.secrets.get("gcp_service_account")
-    if sa is None:
-        raise RuntimeError("❌ secrets ناقص: لازم [gcp_service_account]")
+def _fix_private_key(k: str) -> str:
+    """Ensure private_key has proper newlines."""
+    if not k:
+        return k
+    k = k.strip()
+    # if user pasted key without newlines but includes BEGIN/END
+    if "-----BEGIN PRIVATE KEY-----" in k and "\\n" in k:
+        return k.replace("\\n", "\n")
+    # if BEGIN directly followed by base64 (like your last secrets)
+    if "-----BEGIN PRIVATE KEY-----" in k and "-----END PRIVATE KEY-----" in k and "\n" not in k:
+        # try to re-insert newlines safely (best effort)
+        k = k.replace("-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----\n")
+        k = k.replace("-----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----\n")
+        return k
+    return k
 
-    if hasattr(sa, "keys"):          # streamlit SecretDict
+def gs_make_client():
+    """
+    Reads credentials from:
+      st.secrets["gcp_service_account"] (Streamlit Cloud)
+    Returns: gspread client
+    """
+    try:
+        sa = st.secrets.get("gcp_service_account", None)
+        if not sa:
+            raise RuntimeError("Missing [gcp_service_account] in secrets.toml")
+
         sa_info = dict(sa)
-    elif isinstance(sa, str):        # JSON string
-        sa_info = json.loads(sa)
-    else:
-        sa_info = dict(sa)
+        sa_info["private_key"] = _fix_private_key(sa_info.get("private_key",""))
 
-    # ✅ Fix the common newline issue: private_key contains literal "\\n"
-    pk = sa_info.get("private_key", "")
-    if isinstance(pk, str):
-        sa_info["private_key"] = pk.replace("\\n", "\n")
+        creds = Credentials.from_service_account_info(sa_info, scopes=SCOPE)
+        gc = gspread.authorize(creds)
+        return gc, None
+    except Exception as e:
+        return None, e
 
-    return sa_info
+def gs_open_spreadsheet(gc):
+    sid = st.secrets.get("SPREADSHEET_ID", "").strip()
+    if not sid:
+        raise RuntimeError("Missing SPREADSHEET_ID in secrets.toml")
+    return gc.open_by_key(sid)
 
-def gs_client() -> gspread.Client:
-    sa_info = _load_sa_info_from_secrets()
-    creds = Credentials.from_service_account_info(sa_info, scopes=GS_SCOPES)
-    return gspread.authorize(creds)
-
-def gs_open_spreadsheet():
-    if not SPREADSHEET_ID:
-        raise RuntimeError("❌ SPREADSHEET_ID فارغ في secrets")
-    gc = gs_client()
-    return gc.open_by_key(SPREADSHEET_ID)
-
-def ensure_ws(sh, title: str, headers: List[str], rows: int = 2000, cols: int = 26):
+def ws_ensure(sh, title: str, cols: List[str], rows: int = 2000, cols_n: int = 40):
     try:
         ws = sh.worksheet(title)
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=title, rows=str(rows), cols=str(max(cols, len(headers)+2)))
-        ws.update("A1", [headers])
+        ws = sh.add_worksheet(title=title, rows=str(rows), cols=str(cols_n))
+        ws.update("A1", [cols])
         return ws
 
-    # ensure header row
-    cur = ws.row_values(1)
-    if not cur or cur[:len(headers)] != headers:
-        ws.update("A1", [headers])
+    header = ws.row_values(1) or []
+    if header != cols:
+        ws.update("A1", [cols])
     return ws
 
-def ws_get_df(ws, headers: List[str]) -> pd.DataFrame:
+def ws_read_df(ws, cols: List[str]) -> pd.DataFrame:
     values = ws.get_all_values()
-    if not values or len(values) == 1:
-        return pd.DataFrame(columns=headers)
-    head = values[0]
+    if not values or len(values) < 2:
+        return pd.DataFrame(columns=cols)
+
+    header = values[0]
     data = values[1:]
+    df = pd.DataFrame(data, columns=header).fillna("")
 
-    # map existing header to expected headers
-    idx = {h.strip(): i for i, h in enumerate(head)}
-    fixed = []
-    for r in data:
-        row = []
-        for col in headers:
-            j = idx.get(col)
-            row.append(r[j] if (j is not None and j < len(r)) else "")
-        fixed.append(row)
-    return pd.DataFrame(fixed, columns=headers).fillna("")
+    # ensure expected columns exist (add missing)
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    return df[cols].fillna("")
 
-def ws_safe_write_df(ws, df: pd.DataFrame, headers: List[str]):
-    """Overwrite sheet with header + df, without relying on ws.clear()."""
+def ws_write_df(ws, df: pd.DataFrame, cols: List[str]):
+    """
+    Safe writer without ws.clear() to avoid permission/auth weirdness.
+    Writes header + all rows starting A1.
+    """
     df = df.copy().fillna("")
-    df = df[headers] if all(c in df.columns for c in headers) else df.reindex(columns=headers, fill_value="")
-    matrix = [headers] + df.astype(str).values.tolist()
+    df = df[cols] if all(c in df.columns for c in cols) else df.reindex(columns=cols, fill_value="")
 
-    # write needed range
-    ws.update("A1", matrix)
+    matrix = [cols] + df.astype(str).values.tolist()
+    ws.update("A1", matrix)  # overwrite range from A1 downwards
 
-    # clear extra old rows (if any) - best effort
-    try:
-        existing_rows = ws.row_count
-        new_rows = len(matrix)
-        if existing_rows > new_rows:
-            # clear from next row to end (A{new_rows+1}:Z{existing_rows})
-            ws.batch_clear([f"A{new_rows+1}:Z{existing_rows}"])
-    except Exception:
-        pass
+def ws_append_row(ws, row: Dict[str, Any], cols: List[str]):
+    ws.append_row([str(row.get(c,"")) for c in cols], value_input_option="USER_ENTERED")
 
-
-# ===================== Bootstrap Sheets =====================
+# ---------------- Bootstrap ----------------
 @st.cache_data(ttl=300)
 def bootstrap_and_load_all():
-    sh = gs_open_spreadsheet()
+    gc, err = gs_make_client()
+    if err:
+        return {"ok": False, "err": err, "diag": "Auth failed at credentials build", "sh": None}
 
-    wsQ = ensure_ws(sh, WS_QUESTIONS, Q_COLS)
-    wsM = ensure_ws(sh, WS_META, META_COLS)
-    wsU = ensure_ws(sh, WS_USERS, USER_COLS)
-    wsC = ensure_ws(sh, WS_CANDIDATES, CAND_COLS)
-    wsRmb = ensure_ws(sh, WS_RESULTS_MB, RES_COLS)
-    wsRbz = ensure_ws(sh, WS_RESULTS_BZ, RES_COLS)
+    try:
+        sh = gs_open_spreadsheet(gc)
+    except Exception as e:
+        return {"ok": False, "err": e, "diag": "Cannot open spreadsheet by key (check share + SPREADSHEET_ID)", "sh": None}
 
-    dfQ = ws_get_df(wsQ, Q_COLS)
-    dfM = ws_get_df(wsM, META_COLS)
-    dfU = ws_get_df(wsU, USER_COLS)
-    dfC = ws_get_df(wsC, CAND_COLS)
-    dfRmb = ws_get_df(wsRmb, RES_COLS)
-    dfRbz = ws_get_df(wsRbz, RES_COLS)
+    # Ensure worksheets
+    wsU = ws_ensure(sh, WS_USERS, USERS_COLS)
+    wsC = ws_ensure(sh, WS_CAND, CAND_COLS)
+    wsQ = ws_ensure(sh, WS_QUESTIONS, Q_COLS)
+    wsM = ws_ensure(sh, WS_META, META_COLS)
+    wsR1 = ws_ensure(sh, WS_RES_MB, RES_COLS)
+    wsR2 = ws_ensure(sh, WS_RES_BZ, RES_COLS)
 
-    # seed Users if empty
-    if dfU.empty:
-        seed = pd.DataFrame([
-            {"username": DEFAULT_ADMIN_USER, "pass_hash": sha256(DEFAULT_ADMIN_PASS), "role":"admin", "created_at": now_iso()},
-            {"username": DEFAULT_EMP_USER,   "pass_hash": sha256(DEFAULT_EMP_PASS),   "role":"employee", "created_at": now_iso()},
-        ])
-        ws_safe_write_df(wsU, seed, USER_COLS)
-        dfU = seed
+    # Ensure default users exist (plain)
+    dfU = ws_read_df(wsU, USERS_COLS)
+    if dfU.empty or not set(dfU["username"].astype(str).str.strip()).issuperset({DEFAULT_ADMIN_USER, DEFAULT_EMP_USER}):
+        base = pd.DataFrame([
+            {"username": DEFAULT_ADMIN_USER, "password": DEFAULT_ADMIN_PASS, "role": "admin"},
+            {"username": DEFAULT_EMP_USER,   "password": DEFAULT_EMP_PASS,   "role": "employee"},
+        ], columns=USERS_COLS)
+        # merge with existing without duplicates
+        if not dfU.empty:
+            dfU2 = pd.concat([dfU, base], ignore_index=True)
+            dfU2["username"] = dfU2["username"].astype(str).str.strip()
+            dfU2 = dfU2.drop_duplicates(subset=["username"], keep="last")
+        else:
+            dfU2 = base
+        ws_write_df(wsU, dfU2, USERS_COLS)
+
+    # Read all to memory
+    df_users = ws_read_df(wsU, USERS_COLS)
+    df_cands = ws_read_df(wsC, CAND_COLS)
+    df_q     = ws_read_df(wsQ, Q_COLS)
+    df_meta  = ws_read_df(wsM, META_COLS)
 
     return {
+        "ok": True,
         "sh": sh,
-        "wsQ": wsQ, "wsM": wsM, "wsU": wsU, "wsC": wsC, "wsRmb": wsRmb, "wsRbz": wsRbz,
-        "dfQ": dfQ, "dfM": dfM, "dfU": dfU, "dfC": dfC, "dfRmb": dfRmb, "dfRbz": dfRbz,
+        "ws": {"U": wsU, "C": wsC, "Q": wsQ, "M": wsM, "R_MB": wsR1, "R_BZ": wsR2},
+        "df": {"users": df_users, "cands": df_cands, "q": df_q, "meta": df_meta}
     }
 
+data = bootstrap_and_load_all()
 
-# ===================== Bank / Meta =====================
-def meta_get(dfM: pd.DataFrame, level: str, key: str, default=""):
-    sub = dfM[(dfM["Level"].astype(str).str.strip()==level) & (dfM["Key"].astype(str).str.strip()==key)]
+# ---------------- Header ----------------
+st.markdown("<h2 style='margin:0'>Mega Formation — English Exams</h2>", unsafe_allow_html=True)
+st.caption("Employee builds questions → Google Sheets | Admin creates candidate passwords | Admin results")
+
+# ---------------- Diagnostics (for invalid_grant) ----------------
+if not data.get("ok"):
+    st.error("❌ Google Sheets: فشل الإتصال")
+    st.code(str(data.get("err")))
+    st.info(
+        "✅ Check-list:\n"
+        "1) SPREADSHEET_ID صحيح\n"
+        "2) Share للـ Spreadsheet مع service account email (Editor)\n"
+        "3) secrets.toml: private_key فيها \\n (الكود يصلّحهم)\n"
+        "4) Sheets API + Drive API enabled\n"
+        "\n"
+        "⚠️ إذا الرسالة: invalid_grant: account not found\n"
+        "هذا يعني Service Account Key غلط/محذوف/موش لنفس project أو client_email موش مطابق."
+    )
+    st.stop()
+
+sh = data["sh"]
+wsU, wsC, wsQ, wsM = data["ws"]["U"], data["ws"]["C"], data["ws"]["Q"], data["ws"]["M"]
+wsR_MB, wsR_BZ = data["ws"]["R_MB"], data["ws"]["R_BZ"]
+
+# Always reload fresh small tables when needed (avoid stale cache surprises)
+def load_users_df():
+    return ws_read_df(wsU, USERS_COLS)
+
+def load_cands_df():
+    return ws_read_df(wsC, CAND_COLS)
+
+def load_q_df():
+    return ws_read_df(wsQ, Q_COLS)
+
+def load_meta_df():
+    return ws_read_df(wsM, META_COLS)
+
+# ---------------- Auth (PLAIN passwords) ----------------
+def verify_user_plain(username: str, password: str) -> Optional[str]:
+    df = load_users_df()
+    u = (username or "").strip()
+    p = (password or "").strip()
+    hit = df[
+        (df["username"].astype(str).str.strip() == u) &
+        (df["password"].astype(str).str.strip() == p)
+    ]
+    if hit.empty:
+        return None
+    return str(hit.iloc[0]["role"]).strip()
+
+# ---------------- Meta helpers ----------------
+def meta_get(level: str, key: str, default=""):
+    dfm = load_meta_df()
+    sub = dfm[(dfm["Level"].astype(str).str.strip() == level) & (dfm["Key"].astype(str).str.strip() == key)]
     if sub.empty:
         return default
     v = str(sub.iloc[-1]["Value"]).strip()
     return v if v else default
 
-def meta_set(wsM, dfM: pd.DataFrame, level: str, key: str, value: str):
+def meta_set(level: str, key: str, value: str):
+    dfm = load_meta_df()
     level = level.strip()
     key = key.strip()
-    dfM2 = dfM[~((dfM["Level"].astype(str).str.strip()==level) & (dfM["Key"].astype(str).str.strip()==key))].copy()
-    dfM2 = pd.concat([dfM2, pd.DataFrame([{"Level":level, "Key":key, "Value":str(value)}])], ignore_index=True)
-    ws_safe_write_df(wsM, dfM2, META_COLS)
-    return dfM2
+    dfm = dfm[~((dfm["Level"].astype(str).str.strip() == level) & (dfm["Key"].astype(str).str.strip() == key))]
+    dfm = pd.concat([dfm, pd.DataFrame([{"Level":level, "Key":key, "Value":str(value)}])], ignore_index=True)
+    ws_write_df(wsM, dfm, META_COLS)
 
-def upsert_questions(wsQ, dfQ: pd.DataFrame, rows: List[Dict[str, Any]]):
-    df = dfQ.copy().fillna("")
-    idx_map = {str(r.get("QID","")).strip(): i for i, r in df.iterrows() if str(r.get("QID","")).strip()}
+# ---------------- Questions upsert ----------------
+def upsert_questions(rows: List[Dict[str, Any]]):
+    dfq = load_q_df()
+
+    if dfq.empty:
+        dfq2 = pd.DataFrame(rows, columns=Q_COLS).fillna("")
+        ws_write_df(wsQ, dfq2, Q_COLS)
+        return
+
+    dfq = dfq.copy().fillna("")
+    idx_map = {str(r["QID"]).strip(): i for i, r in dfq.iterrows() if str(r.get("QID","")).strip()}
 
     for r in rows:
         qid = str(r.get("QID","")).strip()
@@ -275,34 +339,34 @@ def upsert_questions(wsQ, dfQ: pd.DataFrame, rows: List[Dict[str, Any]]):
         if qid in idx_map:
             i = idx_map[qid]
             for c in Q_COLS:
-                df.at[i, c] = r.get(c, "")
+                dfq.at[i, c] = str(r.get(c, ""))
         else:
-            df = pd.concat([df, pd.DataFrame([r], columns=Q_COLS)], ignore_index=True)
+            dfq = pd.concat([dfq, pd.DataFrame([r], columns=Q_COLS)], ignore_index=True)
 
-    ws_safe_write_df(wsQ, df, Q_COLS)
-    return df
+    ws_write_df(wsQ, dfq.fillna(""), Q_COLS)
 
-def delete_question_qid(wsQ, dfQ: pd.DataFrame, qid: str):
-    qid = str(qid).strip()
-    df = dfQ[dfQ["QID"].astype(str).str.strip() != qid].copy()
-    ws_safe_write_df(wsQ, df, Q_COLS)
-    return df
+def delete_question_qid(qid: str):
+    dfq = load_q_df()
+    dfq = dfq[dfq["QID"].astype(str).str.strip() != str(qid).strip()].copy()
+    ws_write_df(wsQ, dfq, Q_COLS)
 
-def load_exam_from_gs(dfQ: pd.DataFrame, dfM: pd.DataFrame, level: str) -> Optional[Dict[str, Any]]:
-    sub = dfQ[dfQ["Level"].astype(str).str.strip() == level].copy()
+# ---------------- Exam loader (from Google Sheets) ----------------
+def load_exam_from_gs(level: str) -> Optional[Dict[str, Any]]:
+    dfq = load_q_df()
+    sub = dfq[dfq["Level"].astype(str).str.strip() == level].copy()
     if sub.empty:
         return None
 
-    title = meta_get(dfM, level, "title", f"Mega Formation English Exam — {level}")
-    dur   = meta_get(dfM, level, "duration_min", str(DEFAULT_DUR.get(level, 60)))
+    title = meta_get(level, "title", f"Mega Formation English Exam — {level}")
+    dur   = meta_get(level, "duration_min", str(DEFAULT_DUR.get(level, 60)))
     try:
         dur = int(float(dur))
     except Exception:
         dur = DEFAULT_DUR.get(level, 60)
 
-    listening_audio = meta_get(dfM, level, "listening_audio", "")
-    listening_trans = meta_get(dfM, level, "listening_transcript", "")
-    reading_passage = meta_get(dfM, level, "reading_passage", "")
+    listening_audio = meta_get(level, "listening_audio", "")
+    listening_trans = meta_get(level, "listening_transcript", "")
+    reading_passage = meta_get(level, "reading_passage", "")
 
     exam = {
         "meta": {"title": title, "level": level, "duration_min": dur, "exam_id": f"GS_{level}_{datetime.now().strftime('%Y%m%d')}"},
@@ -363,29 +427,19 @@ def load_exam_from_gs(dfQ: pd.DataFrame, dfM: pd.DataFrame, level: str) -> Optio
 
     return exam
 
-
-# ===================== Users / Auth =====================
-def verify_user(dfU: pd.DataFrame, username: str, password: str):
-    u = (username or "").strip()
-    ph = sha256(password or "")
-    hit = dfU[(dfU["username"] == u) & (dfU["pass_hash"] == ph)]
-    if hit.empty:
-        return None
-    return str(hit.iloc[0]["role"])
-
-
-# ===================== Candidates =====================
-def admin_create_candidate(wsC, dfC: pd.DataFrame, phone: str, level: str, branch: str, created_by: str, pass_plain: Optional[str]=None) -> str:
+# ---------------- Candidate accounts (PLAIN) ----------------
+def admin_create_candidate(phone: str, level: str, branch: str, created_by: str, pass_plain: Optional[str]=None) -> str:
     phone = clean_phone(phone)
-    pwd = pass_plain or make_password(8)
-    df = dfC.copy().fillna("")
+    pwd = (pass_plain or make_password(8)).strip()
+
+    df = load_cands_df()
 
     # overwrite existing for same phone (reset)
     df = df[df["phone"].astype(str).str.strip() != phone].copy()
 
     row = {
         "phone": phone,
-        "pass_hash": sha256(pwd),
+        "password": pwd,          # ✅ plain
         "level": level,
         "branch": branch,
         "created_at": now_iso(),
@@ -395,16 +449,21 @@ def admin_create_candidate(wsC, dfC: pd.DataFrame, phone: str, level: str, branc
         "created_by": created_by
     }
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-    ws_safe_write_df(wsC, df, CAND_COLS)
+    ws_write_df(wsC, df, CAND_COLS)
     return pwd
 
-def verify_candidate_login(wsC, dfC: pd.DataFrame, phone: str, password: str):
+def verify_candidate_login(phone: str, password: str):
     phone = clean_phone(phone)
-    ph = sha256(password or "")
-    df = dfC.copy().fillna("")
-    hit = df[(df["phone"].astype(str).str.strip() == phone) & (df["pass_hash"].astype(str).str.strip() == ph)]
+    pwd = (password or "").strip()
+
+    df = load_cands_df()
+    hit = df[
+        (df["phone"].astype(str).str.strip() == phone) &
+        (df["password"].astype(str).str.strip() == pwd)
+    ]
     if hit.empty:
         return None, "Login غالط."
+
     row = hit.iloc[-1].to_dict()
     if str(row.get("is_used","0")) == "1":
         return None, "هذا الحساب مستعمل قبل (Single-use)."
@@ -412,22 +471,21 @@ def verify_candidate_login(wsC, dfC: pd.DataFrame, phone: str, password: str):
     # update last_login_at
     idx = hit.index[-1]
     df.loc[idx, "last_login_at"] = now_iso()
-    ws_safe_write_df(wsC, df, CAND_COLS)
+    ws_write_df(wsC, df, CAND_COLS)
 
     payload = {"phone": phone, "level": str(row.get("level","B1")), "branch": str(row.get("branch","MB"))}
     return payload, None
 
-def mark_candidate_used(wsC, dfC: pd.DataFrame, phone: str):
+def mark_candidate_used(phone: str):
     phone = clean_phone(phone)
-    df = dfC.copy().fillna("")
+    df = load_cands_df()
     mask = (df["phone"].astype(str).str.strip() == phone)
     if mask.any():
         df.loc[mask, "is_used"] = "1"
         df.loc[mask, "used_at"] = now_iso()
-        ws_safe_write_df(wsC, df, CAND_COLS)
+        ws_write_df(wsC, df, CAND_COLS)
 
-
-# ===================== Scoring =====================
+# ---------------- Scoring ----------------
 def score_item_pct(item, user_val):
     itype = item.get("type")
     correct = item.get("answer")
@@ -464,15 +522,14 @@ def score_writing_pct(text, min_w, max_w, keywords):
     kw_score = min(60, hits*12)
     return float(min(100, base + kw_score)), wc, hits
 
+# ---------------- Results storage ----------------
+def save_result_row(branch_code: str, row: Dict[str, Any]):
+    if branch_code == "MB":
+        ws_append_row(wsR_MB, row, RES_COLS)
+    else:
+        ws_append_row(wsR_BZ, row, RES_COLS)
 
-# ===================== Results =====================
-def save_result_row(wsR, dfR: pd.DataFrame, row: Dict[str, Any]):
-    df = pd.concat([dfR.copy().fillna(""), pd.DataFrame([row])], ignore_index=True)
-    ws_safe_write_df(wsR, df, RES_COLS)
-    return df
-
-
-# ===================== Session state =====================
+# ---------------- Session state ----------------
 def init_state():
     st.session_state.setdefault("role", "candidate")  # candidate/admin/employee
     st.session_state.setdefault("user", "")
@@ -484,75 +541,33 @@ def init_state():
     st.session_state.setdefault("answers", {s:{} for s in SECTIONS})
 init_state()
 
-
-# ===================== Load sheets =====================
-try:
-    data = bootstrap_and_load_all()
-except Exception as e:
-    st.error("❌ Google Sheets: فشل الاتصال.")
-    st.code(str(e))
-    st.info(
-        "✅ Check-list:\n"
-        "1) SPREADSHEET_ID صحيح\n"
-        "2) Share للSheet مع service account (Editor)\n"
-        "3) في secrets: private_key فيها \\n (والكود يصلّحهم)\n"
-        "4) Sheets API + Drive API enabled"
-    )
-    st.stop()
-
-sh   = data["sh"]
-wsQ  = data["wsQ"]
-wsM  = data["wsM"]
-wsU  = data["wsU"]
-wsC  = data["wsC"]
-wsRmb= data["wsRmb"]
-wsRbz= data["wsRbz"]
-
-dfQ  = data["dfQ"]
-dfM  = data["dfM"]
-dfU  = data["dfU"]
-dfC  = data["dfC"]
-dfRmb= data["dfRmb"]
-dfRbz= data["dfRbz"]
-
-
-# ===================== Header =====================
-c1,c2 = st.columns([1,4])
-with c1:
-    st.markdown("🧭 **Mega Formation**")
-with c2:
-    st.markdown("<h2 style='margin:0'>Mega Formation — English Exams</h2>", unsafe_allow_html=True)
-    st.caption("Employee builds questions → Google Sheets | Admin creates candidate passwords | Admin results")
-
-
-# ===================== Sidebar Login =====================
+# ---------------- Sidebar: Login ----------------
 with st.sidebar:
     st.header("Login")
+
     tab_emp, tab_admin, tab_cand = st.tabs(["👩‍💼 Employee", "🛡️ Admin", "🎓 Candidate"])
 
     with tab_emp:
         eu = st.text_input("Username", key="emp_u")
         ep = st.text_input("Password", type="password", key="emp_p")
         if st.button("Login Employee", key="emp_login"):
-            role = verify_user(dfU, eu, ep)
+            role = verify_user_plain(eu, ep)
             if role == "employee":
                 st.session_state.role = "employee"
                 st.session_state.user = eu
                 st.success("Employee logged in ✅")
-                st.rerun()
             else:
                 st.error("Login failed.")
 
     with tab_admin:
-        au = st.text_input("Username ", key="adm_u")
-        ap = st.text_input("Password ", type="password", key="adm_p")
+        au = st.text_input("Username", key="adm_u")
+        ap = st.text_input("Password", type="password", key="adm_p")
         if st.button("Login Admin", key="adm_login"):
-            role = verify_user(dfU, au, ap)
+            role = verify_user_plain(au, ap)
             if role == "admin":
                 st.session_state.role = "admin"
                 st.session_state.user = au
                 st.success("Admin logged in ✅")
-                st.rerun()
             else:
                 st.error("Login failed.")
 
@@ -560,14 +575,13 @@ with st.sidebar:
         phone = st.text_input("Phone", key="cand_phone")
         pwd   = st.text_input("Password", type="password", key="cand_pwd")
         if st.button("Login Candidate", key="cand_login"):
-            payload, err = verify_candidate_login(wsC, dfC, phone, pwd)
+            payload, err = verify_candidate_login(phone, pwd)
             if err:
                 st.error(err)
             else:
                 st.session_state.candidate_ok = True
                 st.session_state.candidate_payload = payload
                 st.success("OK ✅ You can start the exam now.")
-                st.rerun()
 
     if st.session_state.role in ("admin","employee"):
         if st.button("Logout", key="logout_any"):
@@ -580,10 +594,8 @@ with st.sidebar:
             st.session_state.exam = None
             st.session_state.answers = {s:{} for s in SECTIONS}
             st.success("Logged out.")
-            st.rerun()
 
-
-# ===================== Employee Builder =====================
+# ---------------- Employee Builder ----------------
 def row_from_task(level: str, section: str, task: Dict[str, Any]) -> Dict[str, Any]:
     qid = task.get("qid") or str(uuid.uuid4())
     task["qid"] = qid
@@ -611,7 +623,7 @@ def row_from_task(level: str, section: str, task: Dict[str, Any]) -> Dict[str, A
         "Answer": pipe_join(answer),
         "SourceText": source_text,
         "Mode": mode,
-        "MaxSelect": max_sel,
+        "MaxSelect": str(max_sel),
         "MinWords": "",
         "MaxWords": "",
         "Keywords": "",
@@ -632,41 +644,38 @@ def row_from_writing(level: str, writing: Dict[str, Any]) -> Dict[str, Any]:
         "SourceText": "",
         "Mode": "",
         "MaxSelect": "",
-        "MinWords": int(writing.get("min_words",120)),
-        "MaxWords": int(writing.get("max_words",150)),
+        "MinWords": str(int(writing.get("min_words",120))),
+        "MaxWords": str(int(writing.get("max_words",150))),
         "Keywords": pipe_join(writing.get("keywords",[])),
         "UpdatedAt": now_iso(),
     }
 
 def load_exam_for_edit(level: str) -> Dict[str, Any]:
-    ex = load_exam_from_gs(dfQ, dfM, level)
-    if not ex:
-        ex = {
+    exam = load_exam_from_gs(level)
+    if not exam:
+        exam = {
             "meta": {"title": f"Mega Formation English Exam — {level}", "level": level, "duration_min": DEFAULT_DUR.get(level,60), "exam_id": f"GS_{level}"},
             "listening": {"audio_path": "", "transcript": "", "tasks": []},
             "reading": {"passage": "", "tasks": []},
             "use": {"tasks": []},
             "writing": {"prompt": "", "min_words": 120, "max_words": 150, "keywords": []}
         }
-    return ex
+    return exam
 
 def save_exam_to_gs(level: str, exam: Dict[str, Any]):
-    global dfQ, dfM
     rows = []
     for sec_key, sec_name in [("listening","Listening"), ("reading","Reading"), ("use","Use of English")]:
         for t in exam.get(sec_key, {}).get("tasks", []):
             rows.append(row_from_task(level, sec_name, t))
     rows.append(row_from_writing(level, exam.get("writing", {})))
 
-    dfQ = upsert_questions(wsQ, dfQ, rows)
+    upsert_questions(rows)
 
-    dfM = meta_set(wsM, dfM, level, "title", exam["meta"].get("title", f"Mega Formation English Exam — {level}"))
-    dfM = meta_set(wsM, dfM, level, "duration_min", str(exam["meta"].get("duration_min", DEFAULT_DUR.get(level,60))))
-    dfM = meta_set(wsM, dfM, level, "listening_audio", exam.get("listening", {}).get("audio_path",""))
-    dfM = meta_set(wsM, dfM, level, "listening_transcript", exam.get("listening", {}).get("transcript",""))
-    dfM = meta_set(wsM, dfM, level, "reading_passage", exam.get("reading", {}).get("passage",""))
-
-    st.cache_data.clear()
+    meta_set(level, "title", exam["meta"].get("title", f"Mega Formation English Exam — {level}"))
+    meta_set(level, "duration_min", str(exam["meta"].get("duration_min", DEFAULT_DUR.get(level,60))))
+    meta_set(level, "listening_audio", exam.get("listening", {}).get("audio_path",""))
+    meta_set(level, "listening_transcript", exam.get("listening", {}).get("transcript",""))
+    meta_set(level, "reading_passage", exam.get("reading", {}).get("passage",""))
 
 def render_task_editor(level: str, section_key: str, tasks: List[Dict[str, Any]], idx=None):
     TYPES = ["radio","checkbox","text","tfn","highlight"]
@@ -772,15 +781,12 @@ def render_task_editor(level: str, section_key: str, tasks: List[Dict[str, Any]]
                 if st.button("🗑️ Delete task", key=f"{section_key}_del_{idx}"):
                     qid = data.get("qid")
                     if qid:
-                        global dfQ
-                        dfQ = delete_question_qid(wsQ, dfQ, qid)
-                        st.cache_data.clear()
+                        delete_question_qid(qid)
                     tasks.pop(idx)
                     st.warning("Deleted ⚠️")
 
-
 def employee_panel():
-    st.subheader("👩‍💼 Employee Panel — Builder")
+    st.subheader("👩‍💼 Employee Panel — Builder (Google Sheets)")
 
     level = st.selectbox("Level to edit", LEVELS, key="emp_edit_level")
     exam = load_exam_for_edit(level)
@@ -788,22 +794,23 @@ def employee_panel():
     st.markdown("#### Exam meta")
     cA,cB = st.columns([2,1])
     with cA:
-        exam["meta"]["title"] = st.text_input("Title", value=exam["meta"].get("title", f"Mega Formation English Exam — {level}"), key="meta_title")
+        exam["meta"]["title"] = st.text_input("Title", value=exam["meta"].get("title", f"Mega Formation English Exam — {level}"))
     with cB:
         exam["meta"]["duration_min"] = st.number_input("Duration (min)", min_value=10, step=5,
-                                                       value=int(exam["meta"].get("duration_min", DEFAULT_DUR.get(level,60))),
-                                                       key="meta_dur")
+                                                       value=int(exam["meta"].get("duration_min", DEFAULT_DUR.get(level,60))))
 
     st.markdown("#### Listening meta")
     exam["listening"]["transcript"] = st.text_area("Listening transcript (optional)",
-                                                   value=exam["listening"].get("transcript",""),
-                                                   key="listen_trans")
-    exam["listening"]["audio_path"] = st.text_input("Listening audio URL (optional)", value=exam["listening"].get("audio_path",""), key="listen_audio_url")
+                                                   value=exam["listening"].get("transcript",""))
+
+    exam["listening"]["audio_path"] = st.text_input(
+        "Listening audio URL (Google Drive direct / or any URL) — (optional)",
+        value=exam["listening"].get("audio_path","")
+    )
 
     st.markdown("#### Reading meta")
     exam["reading"]["passage"] = st.text_area("Reading passage",
-                                              value=exam["reading"].get("passage",""),
-                                              key="reading_passage")
+                                              value=exam["reading"].get("passage",""))
 
     st.markdown("---")
     st.markdown("### Listening Tasks")
@@ -829,26 +836,23 @@ def employee_panel():
 
     st.markdown("### Writing")
     W = exam["writing"]
-    W["prompt"] = st.text_area("Writing prompt", value=W.get("prompt",""), key="w_prompt")
+    W["prompt"] = st.text_area("Writing prompt", value=W.get("prompt",""))
     c1,c2 = st.columns(2)
-    W["min_words"] = c1.number_input("Min words", value=int(W.get("min_words",120)), min_value=0, step=5, key="w_min")
-    W["max_words"] = c2.number_input("Max words", value=int(W.get("max_words",150)), min_value=0, step=5, key="w_max")
-    kraw = st.text_input("Keywords (comma-separated)", value=", ".join(W.get("keywords",[])), key="w_kw")
+    W["min_words"] = c1.number_input("Min words", value=int(W.get("min_words",120)), min_value=0, step=5)
+    W["max_words"] = c2.number_input("Max words", value=int(W.get("max_words",150)), min_value=0, step=5)
+    kraw = st.text_input("Keywords (comma-separated)", value=", ".join(W.get("keywords",[])))
     W["keywords"] = [k.strip() for k in kraw.split(",") if k.strip()]
 
     st.markdown("---")
-    if st.button("💾 Save THIS LEVEL to Google Sheets", type="primary", key="save_level_gs"):
+    if st.button("💾 Save THIS LEVEL to Google Sheets", type="primary"):
         save_exam_to_gs(level, exam)
         st.success(f"Saved ✅ → Google Sheets (Level {level})")
-        st.rerun()
 
-
-# ===================== Admin Panel =====================
+# ---------------- Admin Panel ----------------
 def admin_panel():
-    global dfC, dfRmb, dfRbz
     st.subheader("🛡️ Admin Panel")
 
-    tab_cands, tab_results = st.tabs(["👥 Candidates", "📊 Results"])
+    tab_cands, tab_results, tab_users = st.tabs(["👥 Candidates", "📊 Results", "🔐 Users"])
 
     with tab_cands:
         st.markdown("### Create candidate login (Phone + Password)")
@@ -872,72 +876,70 @@ def admin_panel():
                 st.error("اكتب رقم هاتف صحيح.")
             else:
                 pwd = admin_create_candidate(
-                    wsC, dfC,
                     phone=p,
                     level=lvl,
                     branch=BRANCHES[br],
                     created_by=st.session_state.user,
                     pass_plain=(None if auto_pw else manual_pw)
                 )
-                dfC = ws_get_df(wsC, CAND_COLS)
                 st.success("Candidate created ✅ (give phone+password to the candidate)")
-                st.code(f"Phone: {p}\nPassword: {pwd}\nLevel: {lvl}\nBranch: {BRANCHES[br]}\nSingle-use: YES")
+                st.code(f"Phone: {p}\nPassword: {pwd}\nLevel: {lvl}\nBranch: {BRANCHES[br]}\nSingle-use: YES (locks after submit)")
 
         st.markdown("---")
-        dfc = ws_get_df(wsC, CAND_COLS)
+        dfc = load_cands_df()
         if dfc.empty:
             st.info("No candidates yet.")
         else:
             view = dfc.copy()
             view["status"] = view["is_used"].apply(lambda x: "USED" if str(x)=="1" else "ACTIVE")
-            st.dataframe(view.sort_values("created_at", ascending=False), use_container_width=True, height=280)
+            st.dataframe(view.sort_values("created_at", ascending=False), use_container_width=True, height=320)
 
-            st.markdown("### Unlock (ACTIVE) or delete")
+            st.markdown("### Manage candidate")
             c1,c2,c3 = st.columns([2,1,1])
             with c1:
                 target = st.text_input("Phone to manage", key="adm_manage_phone")
             with c2:
                 if st.button("Unlock (set ACTIVE)", key="adm_unlock"):
                     p = clean_phone(target)
-                    df = ws_get_df(wsC, CAND_COLS)
+                    df = load_cands_df()
                     mask = (df["phone"].astype(str).str.strip() == p)
                     if mask.any():
                         df.loc[mask, "is_used"] = "0"
                         df.loc[mask, "used_at"] = ""
-                        ws_safe_write_df(wsC, df, CAND_COLS)
+                        ws_write_df(wsC, df, CAND_COLS)
                         st.success("Unlocked ✅")
                     else:
                         st.error("Phone not found.")
             with c3:
                 if st.button("Delete", key="adm_delete"):
                     p = clean_phone(target)
-                    df = ws_get_df(wsC, CAND_COLS)
+                    df = load_cands_df()
                     df = df[df["phone"].astype(str).str.strip() != p].copy()
-                    ws_safe_write_df(wsC, df, CAND_COLS)
+                    ws_write_df(wsC, df, CAND_COLS)
                     st.warning("Deleted.")
 
     with tab_results:
         st.markdown("### Results dashboard")
         sel_branch = st.selectbox("Branch", list(BRANCHES.keys()), key="adm_branch_sel")
         bcode = BRANCHES[sel_branch]
-        wsR = wsRmb if bcode == "MB" else wsRbz
 
-        df = ws_get_df(wsR, RES_COLS)
+        wsR = wsR_MB if bcode == "MB" else wsR_BZ
+        df = ws_read_df(wsR, RES_COLS)
+
         if df.empty:
             st.warning("No results yet.")
         else:
             st.dataframe(df.sort_values("timestamp", ascending=False), use_container_width=True)
-            st.download_button(
-                "⬇️ Download CSV",
-                df.to_csv(index=False).encode("utf-8"),
-                f"results_{bcode}.csv",
-                "text/csv"
-            )
+            st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode("utf-8"), f"results_{bcode}.csv", "text/csv")
 
+    with tab_users:
+        st.markdown("### Users (Plain Password)")
+        dfu = load_users_df()
+        st.dataframe(dfu, use_container_width=True)
+        st.info("الأعمدة لازمها تكون: username | password | role (و الباسووردات Plain).")
 
-# ===================== Candidate Exam =====================
+# ---------------- Candidate Exam ----------------
 def render_candidate():
-    global dfQ, dfM, dfC, dfRmb, dfRbz
     st.subheader("🎓 Candidate Exam")
 
     if not st.session_state.candidate_ok:
@@ -958,11 +960,7 @@ def render_candidate():
 
     if not st.session_state.candidate_started:
         if st.button("▶️ Start Exam", type="primary", key="start_exam"):
-            # reload latest bank
-            dfQ = ws_get_df(wsQ, Q_COLS)
-            dfM = ws_get_df(wsM, META_COLS)
-
-            exam = load_exam_from_gs(dfQ, dfM, level)
+            exam = load_exam_from_gs(level)
             if not exam:
                 st.error("هذا الLevel مازال موش محضّر في Google Sheets. اطلب من الموظف يحضّرو.")
                 return
@@ -971,7 +969,6 @@ def render_candidate():
             st.session_state.candidate_started = True
             st.session_state.deadline = datetime.utcnow() + timedelta(minutes=int(exam["meta"]["duration_min"]))
             st.success("Exam started ✅")
-            st.rerun()
         return
 
     exam = st.session_state.exam
@@ -993,7 +990,9 @@ def render_candidate():
             st.info(L["transcript"])
         ap = L.get("audio_path","")
         if ap:
-            st.audio(ap)  # URL or direct link
+            st.caption("Audio URL (open in new tab):")
+            st.markdown(ap)
+
         for i, t in enumerate(L.get("tasks", [])):
             key = f"L_{i}"
             ttype = t.get("type")
@@ -1076,7 +1075,7 @@ def render_candidate():
 
         W = exam["writing"]
         W_text = st.session_state.answers["Writing"].get(0,"")
-        W_pct, wc, hits = score_writing_pct(W_text, W.get("min_words",0), W.get("max_words",0), W.get("keywords",[]))
+        W_pct, wc, hits = score_writing_pct(W_text, int(W.get("min_words",0)), int(W.get("max_words",0)), W.get("keywords",[]))
 
         overall = round((L_pct + R_pct + U_pct + W_pct)/4, 1)
         passed = "PASS" if overall >= PASS_MARK else "FAIL"
@@ -1095,14 +1094,10 @@ def render_candidate():
             "Use_of_English": U_pct,
             "Writing": W_pct,
         }
-
-        wsR = wsRmb if bcode == "MB" else wsRbz
-        dfR = ws_get_df(wsR, RES_COLS)
-        _ = save_result_row(wsR, dfR, row)
+        save_result_row(bcode, row)
 
         # lock candidate account (single-use)
-        dfC_latest = ws_get_df(wsC, CAND_COLS)
-        mark_candidate_used(wsC, dfC_latest, phone)
+        mark_candidate_used(phone)
 
         # reset local session
         st.session_state.candidate_started = False
@@ -1112,11 +1107,11 @@ def render_candidate():
         st.session_state.candidate_ok = False
         st.session_state.candidate_payload = None
 
+        # candidate sees only this
         st.success("✅ تم الإجتياز بنجاح، سيتم التواصل معك من قبل إدارة الهيكل.")
         st.stop()
 
-
-# ===================== Router =====================
+# ---------------- Router ----------------
 if st.session_state.role == "employee":
     employee_panel()
 elif st.session_state.role == "admin":
