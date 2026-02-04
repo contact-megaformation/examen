@@ -39,7 +39,7 @@ WS_RES_MB    = "Results_MB"
 WS_RES_BZ    = "Results_BZ"
 
 # Columns
-USERS_COLS = ["username","password","role","updated_at"]
+USERS_COLS = ["username","pass_hash","role","updated_at"]
 CAND_COLS  = ["phone","pass_hash","level","branch","created_at","last_login_at","used_at","is_used","created_by"]
 
 Q_COLS = [
@@ -1114,4 +1114,5 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
