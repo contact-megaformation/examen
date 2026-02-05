@@ -651,10 +651,10 @@ except Exception as e:
         "إذا المشكلة Quota 429: استنى شوية أو قلّل reruns."
     )
     st.stop()
-c1, c2, c3 = st.columns(3)
+c1, c2, c3, c4= st.columns(4)
 
 with c1:
-    st.image("mega_logo.png", width=150)
+    st.image("mega_logo.png", width=130)
 
 with c2:
     st.markdown(
@@ -662,12 +662,10 @@ with c2:
         unsafe_allow_html=True
     )
 
-with c3:
+with c4:
     st.image("logo_mega.png", width=150)
 # ---------------- Header ----------------
 st.markdown("<h1 style='text-align:center;margin-bottom:0'>ACBPT — English Exams</h1>", unsafe_allow_html=True)
-st.caption("Employee builds questions → Google Sheets | Admin creates candidate passwords | Admin results")
-
 # ---------------- Sidebar: Login ----------------
 with st.sidebar:
     st.header("Login")
@@ -1206,6 +1204,7 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
 
 
