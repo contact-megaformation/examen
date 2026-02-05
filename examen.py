@@ -651,7 +651,13 @@ except Exception as e:
         "إذا المشكلة Quota 429: استنى شوية أو قلّل reruns."
     )
     st.stop()
+# ---------------- Partner Logo ----------------
+logo_path = "mega_logo.png"  # بدّل الاسم كان مختلف
 
+if os.path.exists(logo_path):
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        st.image(logo_path, width=180)  # تنجم تبدّل العرض
 # ---------------- Header ----------------
 st.markdown("<h1 style='text-align:center;margin-bottom:0'>Mega Formation — English Exams</h1>", unsafe_allow_html=True)
 st.caption("Employee builds questions → Google Sheets | Admin creates candidate passwords | Admin results")
@@ -1194,3 +1200,4 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
