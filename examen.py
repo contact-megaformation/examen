@@ -12,11 +12,15 @@
 #   - Retry/backoff on 429
 #   - NO ws.clear()
 #   - Chunked writes + cache invalidation after write
+#
+# ADDED:
+# ✅ WhatsApp buttons:
+#   - Admin Panel: Send candidate login/password via WhatsApp
+#   - Results: Send exam result via WhatsApp
 # ------------------------------------------------------------------
 
 import os, re, time, hashlib, uuid, random, urllib.parse
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 import streamlit as st
@@ -49,7 +53,7 @@ Q_COLS = [
     "QID","Level","Section","Type","Question","Options","Answer",
     "SourceText","Mode","MaxSelect","MinWords","MaxWords","Keywords","UpdatedAt"
 ]
-META_COLS = ["Level","Key","Value"]
+META_COLS  = ["Level","Key","Value"]
 USERS_COLS = ["username", "pass_hash", "role", "updated_at"]
 CAND_COLS  = ["phone","pass_hash","level","branch","created_at","last_login_at","used_at","is_used","created_by"]
 
@@ -117,9 +121,65 @@ def tokenise(text: str, mode: str):
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sentences if s.strip()]
 
+# ---------------- WhatsApp helpers ----------------
+def get_app_link() -> str:
+    # حطّها في secrets: APP_LINK="https://...."
+    try:
+        v = str(st.secrets.get("APP_LINK", "")).strip()
+        return v
+    except Exception:
+        return ""
+
+def wa_digits(phone: str) -> str:
+    """wa.me يحب أرقام برك (من غير +)"""
+    p = clean_phone(phone)
+    return re.sub(r"\D", "", str(p or ""))
+
+def wa_link(phone: str, message: str) -> str:
+    p = wa_digits(phone)
+    if not p:
+        return ""
+    return f"https://wa.me/{p}?text={urllib.parse.quote(message)}"
+
+def build_candidate_msg(phone: str, pwd: str, level: str, branch: str) -> str:
+    link = get_app_link()
+    msg = (
+        "👋 مرحبا! هاذم بيانات الدخول لامتحان Mega Formation:\n\n"
+        f"📞 Phone: {phone}\n"
+        f"🔑 Password: {pwd}\n"
+        f"🎯 Level: {level}\n"
+        f"🏫 Branch: {branch}\n\n"
+        "✅ الحساب Single-use (مرّة برك) — بالتوفيق 🤍"
+    )
+    if link:
+        msg += f"\n\n🔗 Link: {link}"
+    return msg
+
+def build_result_msg(row: dict) -> str:
+    name = (row.get("name") or "").strip() or "Candidate"
+    level = row.get("level","")
+    overall = row.get("overall","")
+    passed = row.get("pass","")
+    L = row.get("Listening","")
+    R = row.get("Reading","")
+    U = row.get("Use_of_English","")
+    W = row.get("Writing","")
+    return (
+        "📌 نتيجة الامتحان — Mega Formation\n\n"
+        f"👤 الاسم: {name}\n"
+        f"🎯 Level: {level}\n"
+        f"🏁 Result: {passed}\n"
+        f"📊 Overall: {overall}/100\n\n"
+        "تفاصيل:\n"
+        f"🎧 Listening: {L}\n"
+        f"📖 Reading: {R}\n"
+        f"🧠 Use of English: {U}\n"
+        f"✍️ Writing: {W}\n\n"
+        "✅ شكرا، الإدارة باش تتواصل معاك."
+    )
+
 # ---------------- Google Sheets Client ----------------
 def _fix_private_key(sa: dict) -> dict:
-    # Streamlit secrets sometimes store \n literally or remove line breaks
     pk = sa.get("private_key", "")
     if pk and "\\n" in pk:
         sa["private_key"] = pk.replace("\\n", "\n")
@@ -171,21 +231,14 @@ def ws_ensure(title: str, cols: List[str]):
     except Exception:
         ws = sh.add_worksheet(title=title, rows=1000, cols=max(10, len(cols)+2))
         with_retry(ws.update, "A1", [cols])
-
         return ws
 
-    # Ensure header
-    def _get_header():
-        vals = with_retry(ws.row_values, 1)
-        return vals or []
-
-    header = _get_header()
+    header = with_retry(ws.row_values, 1) or []
     if header[:len(cols)] != cols:
         with_retry(ws.update, "A1", [cols])
     return ws
 
 def ws_update_matrix_in_chunks(ws, start_row: int, matrix: List[List[Any]], chunk_rows: int = 350):
-    # matrix includes header row at index 0 already if you want
     total = len(matrix)
     r0 = start_row
     i = 0
@@ -217,41 +270,36 @@ def ws_read_df_cached(sheet_title: str, cols: tuple) -> pd.DataFrame:
 def ws_read_df(sheet_title: str, cols: List[str]) -> pd.DataFrame:
     return ws_read_df_cached(sheet_title, tuple(cols))
 
+def _invalidate_cache():
+    try:
+        ws_read_df_cached.clear()
+    except Exception:
+        pass
+
 def ws_write_df(sheet_title: str, df: pd.DataFrame, cols: List[str]):
     ws = ws_ensure(sheet_title, cols)
     df = df.copy().fillna("")
     df = df.reindex(columns=cols, fill_value="")
     matrix = [cols] + df.astype(str).values.tolist()
 
-    # write in chunks (NO clear)
     ws_update_matrix_in_chunks(ws, 1, matrix, chunk_rows=350)
 
-    # resize to exactly fit
     try:
         with_retry(ws.resize, rows=max(2, len(matrix)+5), cols=max(10, len(cols)+2))
     except Exception:
         pass
 
-    # invalidate cached reads
-    try:
-        ws_read_df_cached.clear()
-    except Exception:
-        pass
+    _invalidate_cache()
 
 def ws_append_row(sheet_title: str, row: Dict[str, Any], cols: List[str]):
     ws = ws_ensure(sheet_title, cols)
     vals = [str(row.get(c, "")) for c in cols]
     with_retry(ws.append_row, vals, value_input_option="USER_ENTERED")
-
-    try:
-        ws_read_df_cached.clear()
-    except Exception:
-        pass
+    _invalidate_cache()
 
 # ---------------- Bootstrap sheets ----------------
 @st.cache_data(ttl=60, show_spinner=False)
 def bootstrap_and_load_all():
-    # Ensure all sheets exist with headers
     ws_ensure(SHEET_USERS, USERS_COLS)
     ws_ensure(SHEET_CANDIDATES, CAND_COLS)
     ws_ensure(SHEET_QUESTIONS, Q_COLS)
@@ -267,7 +315,6 @@ def bootstrap_and_load_all():
         ])
         ws_write_df(SHEET_USERS, seed, USERS_COLS)
         dfU = ws_read_df(SHEET_USERS, USERS_COLS)
-
 
     dfC = ws_read_df(SHEET_CANDIDATES, CAND_COLS)
     dfQ = ws_read_df(SHEET_QUESTIONS, Q_COLS)
@@ -443,7 +490,6 @@ def save_exam_to_sheets(level: str, exam: Dict[str, Any]):
     rows.append(row_from_writing(level, exam.get("writing", {})))
 
     dfQ = ws_read_df(SHEET_QUESTIONS, Q_COLS)
-    # remove old level rows for clean write (less conflicts)
     dfQ = dfQ[dfQ["Level"].astype(str).str.strip() != level].copy()
     dfQ2 = pd.concat([dfQ, pd.DataFrame(rows, columns=Q_COLS)], ignore_index=True).fillna("")
     ws_write_df(SHEET_QUESTIONS, dfQ2, Q_COLS)
@@ -483,6 +529,7 @@ def verify_user(username: str, password: str) -> Optional[str]:
         return None
 
     return str(hit.iloc[0].get("role", "")).strip() or None
+
 # ---------------- Candidates ----------------
 def admin_create_candidate(phone: str, level: str, branch: str, created_by: str, pass_plain: Optional[str]=None) -> str:
     phone = clean_phone(phone)
@@ -518,7 +565,6 @@ def verify_candidate_login(phone: str, password: str):
     if str(row.get("is_used","0")) == "1":
         return None, "هذا الحساب مستعمل قبل (Single-use)."
 
-    # update last_login_at
     idx = hit.index[-1]
     df.loc[idx, "last_login_at"] = now_iso()
     ws_write_df(SHEET_CANDIDATES, df, CAND_COLS)
@@ -579,7 +625,7 @@ def save_result_row(branch_code: str, row: Dict[str, Any]):
 
 # ---------------- Session state ----------------
 def init_state():
-    st.session_state.setdefault("role", "candidate")  # candidate/admin/employee
+    st.session_state.setdefault("role", "candidate")
     st.session_state.setdefault("user", "")
     st.session_state.setdefault("candidate_ok", False)
     st.session_state.setdefault("candidate_payload", None)
@@ -587,6 +633,7 @@ def init_state():
     st.session_state.setdefault("deadline", None)
     st.session_state.setdefault("exam", None)
     st.session_state.setdefault("answers", {s:{} for s in SECTIONS})
+    st.session_state.setdefault("last_candidate", None)  # ✅ last created candidate for WhatsApp
 init_state()
 
 # ---------------- Safe bootstrap (shows errors nicely) ----------------
@@ -595,7 +642,14 @@ try:
 except Exception as e:
     st.error("❌ Google Sheets: فشل الاتصال.")
     st.code(str(e))
-    st.info("✅ Check-list:\n\n1) SPREADSHEET_ID صحيح\n2) Share للSheet مع service account email (Editor)\n3) secrets: private_key فيها \\n (والكود يصلّحهم)\n4) Sheets API + Drive API enabled\n\nإذا المشكلة Quota 429: استنى شوية أو قلّل reruns.")
+    st.info(
+        "✅ Check-list:\n\n"
+        "1) SPREADSHEET_ID صحيح\n"
+        "2) Share للSheet مع service account email (Editor)\n"
+        "3) secrets: private_key فيها \\n (والكود يصلّحهم)\n"
+        "4) Sheets API + Drive API enabled\n\n"
+        "إذا المشكلة Quota 429: استنى شوية أو قلّل reruns."
+    )
     st.stop()
 
 # ---------------- Header ----------------
@@ -653,6 +707,7 @@ with st.sidebar:
             st.session_state.deadline = None
             st.session_state.exam = None
             st.session_state.answers = {s:{} for s in SECTIONS}
+            st.session_state.last_candidate = None
             st.success("Logged out.")
 
 # ---------------- Employee Panel ----------------
@@ -872,6 +927,28 @@ def admin_panel():
                 st.success("Candidate created ✅ (give phone+password to the candidate)")
                 st.code(f"Phone: {p}\nPassword: {pwd}\nLevel: {lvl}\nBranch: {BRANCHES[br]}\nSingle-use: YES (locks after submit)")
 
+                # ✅ خزّن آخر Candidate للزر متاع WhatsApp
+                st.session_state.last_candidate = {
+                    "phone": p,
+                    "pwd": pwd,
+                    "level": lvl,
+                    "branch": BRANCHES[br],
+                }
+
+        # ✅ زر في الوسط لإرسال لوغين الممتحن بالواتساب
+        if st.session_state.get("last_candidate"):
+            l, m, r = st.columns([1,2,1])
+            with m:
+                if st.button("📲 إرسال لوغين الممتحن على WhatsApp", use_container_width=True, key="wa_send_login"):
+                    c = st.session_state.get("last_candidate", {})
+                    msg = build_candidate_msg(c.get("phone",""), c.get("pwd",""), c.get("level",""), c.get("branch",""))
+                    url = wa_link(c.get("phone",""), msg)
+                    st.code(msg)
+                    if url:
+                        st.markdown(f"[📲 Open WhatsApp]({url})")
+                    else:
+                        st.error("رقم الهاتف غير صحيح.")
+
         st.markdown("---")
         dfc = ws_read_df(SHEET_CANDIDATES, CAND_COLS)
         if dfc.empty:
@@ -915,8 +992,34 @@ def admin_panel():
         if df.empty:
             st.warning("No results yet.")
         else:
-            st.dataframe(df.sort_values("timestamp", ascending=False), use_container_width=True)
-            st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode("utf-8"), f"results_{bcode}.csv", "text/csv")
+            df_sorted = df.sort_values("timestamp", ascending=False).copy()
+            st.dataframe(df_sorted, use_container_width=True)
+            st.download_button("⬇️ Download CSV", df_sorted.to_csv(index=False).encode("utf-8"), f"results_{bcode}.csv", "text/csv")
+
+            st.markdown("### 📲 إرسال نتيجة ممتحن على WhatsApp")
+
+            # options for selectbox
+            options = []
+            df_show = df_sorted.head(200)  # limit UI
+            for idx, rr in df_show.iterrows():
+                label = f"{rr.get('timestamp','')} | {rr.get('name','')} | {rr.get('phone','')} | {rr.get('level','')} | {rr.get('overall','')} | {rr.get('pass','')}"
+                options.append((label, idx))
+
+            if options:
+                pick_label = st.selectbox("اختر ممتحن", [x[0] for x in options], key="pick_res_wa")
+                pick_idx = dict(options)[pick_label]
+                row = df_show.loc[pick_idx].to_dict()
+
+                l, m, r = st.columns([1,2,1])
+                with m:
+                    if st.button("📩 إرسال النتيجة على WhatsApp", use_container_width=True, key="wa_send_result"):
+                        msg = build_result_msg(row)
+                        url = wa_link(row.get("phone",""), msg)
+                        st.code(msg)
+                        if url:
+                            st.markdown(f"[📲 Open WhatsApp]({url})")
+                        else:
+                            st.error("رقم الهاتف غير موجود/غلط.")
 
 # ---------------- Candidate Exam ----------------
 def render_candidate():
@@ -953,7 +1056,6 @@ def render_candidate():
 
     exam = st.session_state.exam
 
-    # timer
     if st.session_state.deadline:
         left = st.session_state.deadline - datetime.utcnow()
         left_sec = max(0, int(left.total_seconds()))
@@ -1075,7 +1177,6 @@ def render_candidate():
         save_result_row(bcode, row)
         mark_candidate_used(phone)
 
-        # reset
         st.session_state.candidate_started = False
         st.session_state.deadline = None
         st.session_state.exam = None
@@ -1093,5 +1194,3 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
-
-
