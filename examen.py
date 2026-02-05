@@ -651,15 +651,22 @@ except Exception as e:
         "إذا المشكلة Quota 429: استنى شوية أو قلّل reruns."
     )
     st.stop()
-# ---------------- Partner Logo ----------------
-logo_path = "mega_logo.png"  # بدّل الاسم كان مختلف
+c1, c2, c3 = st.columns(3)
 
-if os.path.exists(logo_path):
-    c1, c2, c3 = st.columns([1,2,1])
-    with c2:
-        st.image(logo_path, width=180)  # تنجم تبدّل العرض
+with c1:
+    st.image("mega_logo.png", width=150)
+
+with c2:
+    st.markdown(
+        "<h2 style='text-align:center;margin-top:30px'>Mega Formation</h2>",
+        unsafe_allow_html=True
+    )
+
+with c3:
+    st.image("logo_mega.png", width=150)
+تنجم تبدّل العرض
 # ---------------- Header ----------------
-st.markdown("<h1 style='text-align:center;margin-bottom:0'>Mega Formation — English Exams</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center;margin-bottom:0'>ACBPT — English Exams</h1>", unsafe_allow_html=True)
 st.caption("Employee builds questions → Google Sheets | Admin creates candidate passwords | Admin results")
 
 # ---------------- Sidebar: Login ----------------
@@ -1200,4 +1207,5 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
