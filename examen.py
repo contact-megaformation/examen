@@ -651,19 +651,19 @@ except Exception as e:
         "إذا المشكلة Quota 429: استنى شوية أو قلّل reruns."
     )
     st.stop()
-c1, c2, c3, c4= st.columns(4)
+c1, c2, c3= st.columns(3)
 
 with c1:
     st.image("mega_logo.png", width=130)
 
-with c3:
+with c2:
     st.markdown(
-        "<h2 style='text-align:center;margin-top:30px'>Mega Formation</h2>",
+        "<h2 style='text-align:center;margin-top:20px'>Mega Formation</h2>",
         unsafe_allow_html=True
     )
 
-with c4:
-    st.image("logo_mega.png", width=150)
+with c3:
+    st.image("logo_mega.png", width=140)
 # ---------------- Header ----------------
 st.markdown("<h1 style='text-align:center;margin-bottom:0'>ACBPT — English Exams</h1>", unsafe_allow_html=True)
 # ---------------- Sidebar: Login ----------------
@@ -1204,6 +1204,7 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
 
 
