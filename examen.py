@@ -1036,7 +1036,7 @@ def render_candidate():
     st.subheader("🎓 Candidate Exam")
 
     if not st.session_state.candidate_ok:
-        st.info("سجّل الدخول بالـ Phone + Password من الشريط الجانبي (يوفرهم الأدمين).")
+        st.info("To access the exam, please enter your login and password")
         return
 
     payload = st.session_state.candidate_payload or {}
@@ -1204,6 +1204,7 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
 
 
