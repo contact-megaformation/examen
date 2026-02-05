@@ -656,7 +656,7 @@ c1, c2, c3, c4= st.columns(4)
 with c1:
     st.image("mega_logo.png", width=130)
 
-with c2:
+with c3:
     st.markdown(
         "<h2 style='text-align:center;margin-top:30px'>Mega Formation</h2>",
         unsafe_allow_html=True
@@ -1204,6 +1204,7 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
 
 
