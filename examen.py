@@ -658,7 +658,7 @@ with c1:
 
 with c2:
     st.markdown(
-        "<h2 style='text-align:center;margin-top:20px'>Mega Formation</h2>",
+        "<h2 style='text-align:left;margin-top:20px'>Mega Formation</h2>",
         unsafe_allow_html=True
     )
 
@@ -1204,6 +1204,7 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
 
 
