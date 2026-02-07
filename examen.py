@@ -2,62 +2,61 @@
 # ------------------------------------------------------------------
 # Mega Formation — Exams (100% Google Sheets / Single Spreadsheet)
 #
-# ✅ Multi-language: English + French (Candidate UI auto-switch)
+# ✅ English + French (interface auto-switch for Candidate حسب لغة الامتحان)
 # ✅ Levels: A1/A2/B1/B2 + Placement Test (Test de Niveau)
-# ✅ CEFR/CECRL placement mapping + suggested level after submit
-# ✅ WhatsApp buttons:
-#   - Admin: send candidate login/password
-#   - Results: send result message
-#
-# FIXED:
+# ✅ Placement mapping CEFR/CECRL (score → suggested level) محفوظ في Results
+# ✅ Candidate ما يطلعلهش message فيها النتيجة (إنت تبعثهالو أنت)
+# ✅ Admin WhatsApp:
+#    - Send login/password
+#    - Send result (Arabic + French + English)
+# ✅ PDF Review بعد Submit: أسئلة + إجابات الممتحن + التصحيح (Download من Admin)
 # ✅ Quota protections:
-#   - Cached reads (ttl=20s)
-#   - Retry/backoff on 429
-#   - NO ws.clear()
-#   - Chunked writes + cache invalidation
+#    - Cached reads (ttl=20s)
+#    - Retry/backoff on 429
+#    - Chunked writes + cache invalidation
 #
-# NOTE:
-# - All stored in ONE Spreadsheet (multiple tabs)
-# - Auto-migration for missing columns
+# SHEETS/TABS:
+# Users, Candidates, Questions, Meta, Results_MB, Results_BZ
 # ------------------------------------------------------------------
 
-import re, time, hashlib, uuid, random, urllib.parse
+import os, re, time, hashlib, uuid, random, urllib.parse
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 
 import streamlit as st
 import pandas as pd
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.pagesizes import A4
 import gspread
 from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
+
+# PDF
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import cm
+
 
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
 
 # ---------------- Constants ----------------
 LANGUAGES = ["English", "French"]
-
 LEVELS_CORE = ["A1", "A2", "B1", "B2"]
-PLACEMENT_LEVEL = "PLACEMENT"  # internal stored value
-LEVELS_ADMIN = LEVELS_CORE + ["Test de Niveau"]  # UI label for admin/employee
-LEVELS_SHEETS = LEVELS_CORE + [PLACEMENT_LEVEL]  # stored
+PLACEMENT_LEVEL = "PLACEMENT"  # stored value in sheets
+LEVELS_ADMIN = LEVELS_CORE + ["Test de Niveau"]     # UI label
+LEVELS_SHEETS = LEVELS_CORE + [PLACEMENT_LEVEL]     # stored
 
-SECTIONS_KEYS = ["Listening", "Reading", "Use of English", "Writing"]
-
+SECTIONS = ["Listening", "Reading", "Use of English", "Writing"]
 BRANCHES = {"Menzel Bourguiba": "MB", "Bizerte": "BZ"}
+
 DEFAULT_DUR = {"A1": 60, "A2": 60, "B1": 90, "B2": 90, PLACEMENT_LEVEL: 35}
+PASS_MARK = 60.0
 
-PASS_MARK = 60.0  # success threshold for EXAM (not placement)
-
-# Placement mapping (CEFR/CECRL) - you can tune bands as you like
+# Placement mapping (CEFR/CECRL) — score% → suggested level
 PLACEMENT_BANDS = [
-    (0, 29, "A1"),
-    (30, 49, "A2"),
-    (50, 69, "B1"),
-    (70, 100, "B2"),
+    (0, 24, "A1"),
+    (25, 44, "A2"),
+    (45, 64, "B1"),
+    (65, 100, "B2"),
 ]
 
 # Google Sheets tab names (same Spreadsheet)
@@ -68,7 +67,7 @@ SHEET_META       = "Meta"
 SHEET_RES_MB     = "Results_MB"
 SHEET_RES_BZ     = "Results_BZ"
 
-# Columns (with Language + TestType + SuggestedLevel)
+# Columns (Questions + Meta)
 Q_COLS = [
     "QID","Language","Level","Section","Type","Question","Options","Answer",
     "SourceText","Mode","MaxSelect","MinWords","MaxWords","Keywords","UpdatedAt"
@@ -77,10 +76,14 @@ META_COLS  = ["Language","Level","Key","Value"]
 
 USERS_COLS = ["username", "pass_hash", "role", "updated_at"]
 
-CAND_COLS  = ["phone","pass_hash","level","branch","language","created_at","last_login_at","used_at","is_used","created_by"]
+CAND_COLS  = [
+    "phone","pass_hash","level","branch","language",
+    "created_at","last_login_at","used_at","is_used","created_by"
+]
 
 RESULT_COLS = [
-    "timestamp","name","phone","branch","language","level","test_type","suggested_level","exam_id",
+    "timestamp","name","phone","branch","language",
+    "level","test_type","suggested_level","exam_id",
     "overall","pass","Listening","Reading","Use_of_English","Writing"
 ]
 
@@ -95,66 +98,83 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# ---------------- Candidate UI Translation ----------------
-I18N = {
+# ---------------- UI translations ----------------
+T = {
     "English": {
-        "platform_title": "ACBPT — Exams Platform",
         "candidate_title": "🎓 Candidate",
-        "hint_login_1": "Please select “Candidate” from the left panel and enter your login and password to take the exam.",
-        "hint_login_2": "Tip: Choose Candidate on the left side, then enter your login and password.",
-        "start":"▶️ Start",
-        "submit":"✅ Submit",
-        "time_left":"Time left",
-        "time_up":"Time is up! Submit now.",
-        "your_name":"Your name",
-        "essay":"Your essay:",
-        "exam_not_ready":"This exam is not prepared in Google Sheets. Ask the employee to prepare it.",
-        "started":"Started ✅",
-        "done_exam":"✅ Exam submitted successfully. We will contact you soon.",
-        "done_level_prefix":"✅ Your CEFR level is:",
-        "team_contact":"Our team will contact you shortly.",
-        "branch":"Branch",
-        "level":"Level",
-        "language":"Language",
-        "phone":"Phone",
-        "test_de_niveau":"Test de Niveau",
-        "suggested_level":"Suggested level",
-        "result_exam":"📌 Exam Result — Mega Formation",
-        "result_placement":"📌 Placement Result — (CEFR/CECRL)",
-        "details":"Details",
+        "start": "▶️ Start",
+        "submit": "✅ Submit",
+        "time_left": "Time left",
+        "your_name": "Your name",
+        "essay": "Your essay",
+        "login_hint": "Please select “Candidate” from the left panel and enter your login and password to take the exam.",
+        "not_prepared": "This exam is not prepared in Google Sheets. Please ask staff to prepare it.",
+        "done": "✅ Done. Thank you — administration will contact you.",
+        "tab_listening": "Listening",
+        "tab_reading": "Reading",
+        "tab_use": "Use of English",
+        "tab_writing": "Writing",
+        "select_up_to": "Select up to",
+        "words_target": "Target",
     },
     "French": {
-        "platform_title": "ACBPT — Plateforme d’examens",
         "candidate_title": "🎓 Candidat",
-        "hint_login_1": "Veuillez sélectionner “Candidat” à gauche et saisir votre login et mot de passe pour passer l’examen.",
-        "hint_login_2": "Astuce : Choisissez Candidat à gauche, puis saisissez votre login et mot de passe.",
-        "start":"▶️ Commencer",
-        "submit":"✅ Soumettre",
-        "time_left":"Temps restant",
-        "time_up":"Temps écoulé ! Soumettez maintenant.",
-        "your_name":"Votre nom",
-        "essay":"Votre rédaction :",
-        "exam_not_ready":"Cet examen n'est pas encore préparé dans Google Sheets. Demandez à l’employé de le préparer.",
-        "started":"Démarré ✅",
-        "done_exam":"✅ Examen soumis avec succès. Nous vous contacterons bientôt.",
-        "done_level_prefix":"✅ Votre niveau CECRL est :",
-        "team_contact":"Notre équipe vous contactera bientôt.",
-        "branch":"Centre",
-        "level":"Niveau",
-        "language":"Langue",
-        "phone":"Téléphone",
-        "test_de_niveau":"Test de Niveau",
-        "suggested_level":"Niveau conseillé",
-        "result_exam":"📌 Résultat d’examen — Mega Formation",
-        "result_placement":"📌 Résultat — Test de Niveau (CECRL/CEFR)",
-        "details":"Détails",
-    }
+        "start": "▶️ Démarrer",
+        "submit": "✅ Envoyer",
+        "time_left": "Temps restant",
+        "your_name": "Votre nom",
+        "essay": "Votre production écrite",
+        "login_hint": "Veuillez choisir “Candidate” à gauche puis entrer votre login et mot de passe pour passer l’examen.",
+        "not_prepared": "Cet examen n’est pas préparé sur Google Sheets. Veuillez demander à l’équipe de le préparer.",
+        "done": "✅ Terminé. Merci — l’administration vous contactera.",
+        "tab_listening": "Compréhension orale",
+        "tab_reading": "Compréhension écrite",
+        "tab_use": "Langue (grammaire/vocab.)",
+        "tab_writing": "Production écrite",
+        "select_up_to": "Sélectionnez jusqu’à",
+        "words_target": "Objectif",
+    },
 }
 
-SECTION_LABELS = {
-    "English": ["Listening","Reading","Use of English","Writing"],
-    "French": ["Compréhension orale","Compréhension écrite","Grammaire & vocabulaire","Production écrite"]
-}
+# Admin/WhatsApp messages (Arabic + French + English)
+def trilang_result_message(row: dict) -> str:
+    name = (row.get("name") or "").strip() or "Candidate"
+    lang = row.get("language","")
+    test_type = row.get("test_type","EXAM")
+    level = row.get("level","")
+    suggested = row.get("suggested_level","")
+    overall = row.get("overall","")
+    L = row.get("Listening","")
+    R = row.get("Reading","")
+    U = row.get("Use_of_English","")
+    W = row.get("Writing","")
+
+    if test_type == "PLACEMENT":
+        return (
+            "📌 نتيجة — Test de Niveau (CECRL/CEFR)\n"
+            f"👤 الاسم/nom/name: {name}\n"
+            f"🌐 Langue/Language: {lang}\n"
+            f"📊 Score: {overall}/100\n"
+            f"✅ Niveau conseillé / Suggested level / المستوى المقترح: {suggested}\n\n"
+            "Détails / Details / التفاصيل:\n"
+            f"🎧 Listening: {L}\n"
+            f"📖 Reading: {R}\n"
+            f"🧠 Use of English: {U}\n"
+            f"✍️ Writing: {W}\n"
+        )
+
+    return (
+        "📌 نتيجة الامتحان / Résultat / Result\n"
+        f"👤 الاسم/nom/name: {name}\n"
+        f"🌐 Langue/Language: {lang}\n"
+        f"🎯 Level / Niveau / المستوى: {level}\n"
+        f"📊 Overall: {overall}/100\n\n"
+        "Détails / Details / التفاصيل:\n"
+        f"🎧 Listening: {L}\n"
+        f"📖 Reading: {R}\n"
+        f"🧠 Use of English: {U}\n"
+        f"✍️ Writing: {W}\n"
+    )
 
 # ---------------- Utils ----------------
 def now_iso() -> str:
@@ -164,10 +184,8 @@ def sha256(s: str) -> str:
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
 def clean_phone(p: str) -> str:
-    """Normalize UAE-style numbers to +9715xxxxxxxx when possible."""
     p = (p or "").strip()
     p = re.sub(r"[^\d+]", "", p)
-
     if p.startswith("05") and len(p) == 10:
         p = "+971" + p[1:]
     elif p.startswith("5") and len(p) == 9:
@@ -215,15 +233,12 @@ def placement_suggest(score_pct: float) -> str:
 
 # ---------------- WhatsApp helpers ----------------
 def get_app_link() -> str:
-    # put in secrets: APP_LINK="https://...."
     try:
-        v = str(st.secrets.get("APP_LINK", "")).strip()
-        return v
+        return str(st.secrets.get("APP_LINK", "")).strip()
     except Exception:
         return ""
 
 def wa_digits(phone: str) -> str:
-    """wa.me wants digits only (no +)"""
     p = clean_phone(phone)
     return re.sub(r"\D", "", str(p or ""))
 
@@ -249,48 +264,120 @@ def build_candidate_msg(phone: str, pwd: str, language: str, level: str, branch:
         msg += f"\n\n🔗 Link: {link}"
     return msg
 
-def build_result_msg(row: dict) -> str:
-    name = (row.get("name") or "").strip() or "Candidate"
-    language = row.get("language","")
-    level = row.get("level","")
-    test_type = row.get("test_type","EXAM")
-    suggested = row.get("suggested_level","") or ""
-    overall = row.get("overall","")
-    passed = row.get("pass","")
-    L = row.get("Listening","")
-    R = row.get("Reading","")
-    U = row.get("Use_of_English","")
-    W = row.get("Writing","")
+# ---------------- PDF Review ----------------
+def _pdf_wrap_text(c: canvas.Canvas, text: str, x: float, y: float, max_width: float, line_height: float) -> float:
+    """Draw wrapped text. Returns new y."""
+    if not text:
+        return y
+    words = str(text).split()
+    line = ""
+    for w in words:
+        test = (line + " " + w).strip()
+        if c.stringWidth(test, "Helvetica", 10) <= max_width:
+            line = test
+        else:
+            c.drawString(x, y, line)
+            y -= line_height
+            line = w
+            if y < 2*cm:
+                c.showPage()
+                y = A4[1] - 2*cm
+                c.setFont("Helvetica", 10)
+    if line:
+        c.drawString(x, y, line)
+        y -= line_height
+    return y
 
-    if test_type == "PLACEMENT":
-        return (
-            "📌 Résultat — Test de Niveau (CECRL/CEFR)\n\n"
-            f"👤 Nom: {name}\n"
-            f"🌐 Langue: {language}\n"
-            f"📊 Score: {overall}/100\n"
-            f"✅ Niveau conseillé: {suggested}\n\n"
-            "Détails:\n"
-            f"🎧 Listening: {L}\n"
-            f"📖 Reading: {R}\n"
-            f"🧠 Use of English: {U}\n"
-            f"✍️ Writing: {W}\n\n"
-            "✅ Merci. L’administration vous contactera."
-        )
+def generate_review_pdf(
+    out_path: str,
+    candidate_name: str,
+    phone: str,
+    language: str,
+    level: str,
+    exam: Dict[str, Any],
+    answers_state: Dict[str, Dict[int, Any]],
+    scores: Dict[str, Any],
+    suggested_level: str = "",
+):
+    c = canvas.Canvas(out_path, pagesize=A4)
+    w, h = A4
+    x0 = 2*cm
+    y = h - 2*cm
+    maxw = w - 4*cm
 
-    return (
-        "📌 نتيجة الامتحان — Mega Formation\n\n"
-        f"👤 الاسم: {name}\n"
-        f"🌐 Language: {language}\n"
-        f"🎯 Level: {level}\n"
-        f"🏁 Result: {passed}\n"
-        f"📊 Overall: {overall}/100\n\n"
-        "تفاصيل:\n"
-        f"🎧 Listening: {L}\n"
-        f"📖 Reading: {R}\n"
-        f"🧠 Use of English: {U}\n"
-        f"✍️ Writing: {W}\n\n"
-        "✅ شكرا، الإدارة باش تتواصل معاك."
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(x0, y, "Mega Formation — Exam Review")
+    y -= 16
+
+    c.setFont("Helvetica", 10)
+    header = f"Name: {candidate_name} | Phone: {phone} | Language: {language} | Level: {('Test de Niveau' if level==PLACEMENT_LEVEL else level)}"
+    y = _pdf_wrap_text(c, header, x0, y, maxw, 12)
+
+    if suggested_level:
+        y = _pdf_wrap_text(c, f"Suggested level (CEFR/CECRL): {suggested_level}", x0, y, maxw, 12)
+
+    y = _pdf_wrap_text(
+        c,
+        f"Overall: {scores.get('overall','')}/100 | Listening: {scores.get('Listening','')} | Reading: {scores.get('Reading','')} | Use: {scores.get('Use_of_English','')} | Writing: {scores.get('Writing','')}",
+        x0, y, maxw, 12
     )
+    y -= 6
+
+    def section_block(title: str):
+        nonlocal y
+        if y < 4*cm:
+            c.showPage()
+            y = h - 2*cm
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(x0, y, title)
+        y -= 14
+        c.setFont("Helvetica", 10)
+
+    # Build tasks list from exam structure
+    sections_map = {
+        "Listening": exam.get("listening", {}).get("tasks", []),
+        "Reading": exam.get("reading", {}).get("tasks", []),
+        "Use of English": exam.get("use", {}).get("tasks", []),
+    }
+
+    for sec in ["Listening", "Reading", "Use of English"]:
+        section_block(sec)
+        tasks = sections_map.get(sec, [])
+        for i, t in enumerate(tasks):
+            if y < 3*cm:
+                c.showPage()
+                y = h - 2*cm
+                c.setFont("Helvetica", 10)
+
+            q = t.get("q","")
+            correct = t.get("answer","")
+            user = answers_state.get(sec, {}).get(i)
+
+            c.setFont("Helvetica-Bold", 10)
+            y = _pdf_wrap_text(c, f"Q{i+1}: {q}", x0, y, maxw, 12)
+
+            c.setFont("Helvetica", 10)
+            y = _pdf_wrap_text(c, f"Your answer: {user}", x0, y, maxw, 12)
+            y = _pdf_wrap_text(c, f"Correct: {correct}", x0, y, maxw, 12)
+            y -= 6
+
+    # Writing
+    section_block("Writing")
+    W = exam.get("writing", {})
+    prompt = W.get("prompt","")
+    min_w = W.get("min_words",0)
+    max_w = W.get("max_words",0)
+    kws = W.get("keywords", [])
+    user_text = answers_state.get("Writing", {}).get(0, "")
+
+    y = _pdf_wrap_text(c, f"Prompt: {prompt}", x0, y, maxw, 12)
+    y = _pdf_wrap_text(c, f"Target words: {min_w}–{max_w} | Keywords: {kws}", x0, y, maxw, 12)
+    y -= 4
+    y = _pdf_wrap_text(c, "Your text:", x0, y, maxw, 12)
+    y = _pdf_wrap_text(c, user_text, x0, y, maxw, 12)
+
+    c.showPage()
+    c.save()
 
 # ---------------- Google Sheets Client ----------------
 def _fix_private_key(sa: dict) -> dict:
@@ -343,7 +430,7 @@ def ws_ensure(title: str, cols: List[str]):
     try:
         ws = sh.worksheet(title)
     except Exception:
-        ws = sh.add_worksheet(title=title, rows=1200, cols=max(10, len(cols)+2))
+        ws = sh.add_worksheet(title=title, rows=1500, cols=max(10, len(cols)+2))
         with_retry(ws.update, "A1", [cols])
         return ws
 
@@ -393,12 +480,10 @@ def ws_write_df(sheet_title: str, df: pd.DataFrame, cols: List[str]):
     df = df.reindex(columns=cols, fill_value="")
     matrix = [cols] + df.astype(str).values.tolist()
     ws_update_matrix_in_chunks(ws, 1, matrix, chunk_rows=350)
-
     try:
         with_retry(ws.resize, rows=max(2, len(matrix)+5), cols=max(10, len(cols)+2))
     except Exception:
         pass
-
     _invalidate_cache()
 
 def ws_append_row(sheet_title: str, row: Dict[str, Any], cols: List[str]):
@@ -407,7 +492,7 @@ def ws_append_row(sheet_title: str, row: Dict[str, Any], cols: List[str]):
     with_retry(ws.append_row, vals, value_input_option="USER_ENTERED")
     _invalidate_cache()
 
-# ---------------- Bootstrap sheets ----------------
+# ---------------- Bootstrap ----------------
 @st.cache_data(ttl=60, show_spinner=False)
 def bootstrap_and_load_all():
     ws_ensure(SHEET_USERS, USERS_COLS)
@@ -424,14 +509,9 @@ def bootstrap_and_load_all():
             {"username": DEFAULT_EMP_USER,   "pass_hash": DEFAULT_EMP_PASS,   "role": "employee", "updated_at": now_iso()},
         ])
         ws_write_df(SHEET_USERS, seed, USERS_COLS)
+        dfU = ws_read_df(SHEET_USERS, USERS_COLS)
 
-    dfC = ws_read_df(SHEET_CANDIDATES, CAND_COLS)
-    dfQ = ws_read_df(SHEET_QUESTIONS, Q_COLS)
-    dfM = ws_read_df(SHEET_META, META_COLS)
-    dfR_MB = ws_read_df(SHEET_RES_MB, RESULT_COLS)
-    dfR_BZ = ws_read_df(SHEET_RES_BZ, RESULT_COLS)
-
-    return {"users": dfU, "candidates": dfC, "questions": dfQ, "meta": dfM, "res_mb": dfR_MB, "res_bz": dfR_BZ}
+    return True
 
 # ---------------- Meta helpers ----------------
 def meta_get(dfM: pd.DataFrame, language: str, level: str, key: str, default=""):
@@ -446,21 +526,20 @@ def meta_get(dfM: pd.DataFrame, language: str, level: str, key: str, default="")
     return v if v else default
 
 def meta_set(dfM: pd.DataFrame, language: str, level: str, key: str, value: str) -> pd.DataFrame:
-    language = language.strip()
-    level = level.strip()
-    key = key.strip()
-
     dfM2 = dfM.copy()
     dfM2 = dfM2[~(
-        (dfM2["Language"].astype(str).str.strip() == language) &
-        (dfM2["Level"].astype(str).str.strip() == level) &
-        (dfM2["Key"].astype(str).str.strip() == key)
+        (dfM2["Language"].astype(str).str.strip() == language.strip()) &
+        (dfM2["Level"].astype(str).str.strip() == level.strip()) &
+        (dfM2["Key"].astype(str).str.strip() == key.strip())
     )]
-    dfM2 = pd.concat([dfM2, pd.DataFrame([{"Language": language, "Level": level, "Key": key, "Value": str(value)}])], ignore_index=True)
+    dfM2 = pd.concat(
+        [dfM2, pd.DataFrame([{"Language": language, "Level": level, "Key": key, "Value": str(value)}])],
+        ignore_index=True
+    )
     ws_write_df(SHEET_META, dfM2, META_COLS)
     return ws_read_df(SHEET_META, META_COLS)
 
-# ---------------- Exam loading from Sheets ----------------
+# ---------------- Exam loading ----------------
 def load_exam_from_sheets(language: str, level: str) -> Optional[Dict[str, Any]]:
     dfQ = ws_read_df(SHEET_QUESTIONS, Q_COLS)
     dfM = ws_read_df(SHEET_META, META_COLS)
@@ -484,13 +563,8 @@ def load_exam_from_sheets(language: str, level: str) -> Optional[Dict[str, Any]]
     reading_passage = meta_get(dfM, language, level, "reading_passage", "")
 
     exam = {
-        "meta": {
-            "title": title,
-            "language": language,
-            "level": level,
-            "duration_min": dur,
-            "exam_id": f"GS_{language}_{level}_{datetime.now().strftime('%Y%m%d')}"
-        },
+        "meta": {"title": title, "language": language, "level": level, "duration_min": dur,
+                 "exam_id": f"GS_{language}_{level}_{datetime.now().strftime('%Y%m%d')}"},
         "listening": {"audio_path": listening_audio, "transcript": listening_trans, "tasks": []},
         "reading": {"passage": reading_passage, "tasks": []},
         "use": {"tasks": []},
@@ -515,7 +589,7 @@ def load_exam_from_sheets(language: str, level: str) -> Optional[Dict[str, Any]]
 
         task = {"qid": qid, "type": ttype, "q": str(r["Question"]).strip()}
 
-        if ttype in ("radio","checkbox"):
+        if ttype in ("radio", "checkbox"):
             task["options"] = split_pipe(str(r["Options"]))
             if ttype == "radio":
                 task["answer"] = str(r["Answer"]).strip()
@@ -548,22 +622,23 @@ def load_exam_from_sheets(language: str, level: str) -> Optional[Dict[str, Any]]
 
     return exam
 
-# ---------------- Exam saving to Sheets ----------------
+# ---------------- Exam saving ----------------
 def row_from_task(language: str, level: str, section: str, task: Dict[str, Any]) -> Dict[str, Any]:
     qid = task.get("qid") or str(uuid.uuid4())
     task["qid"] = qid
 
-    ttype = task.get("type","")
-    q = task.get("q","")
-    options = task.get("options","")
-    answer  = task.get("answer","")
+    ttype = task.get("type", "")
+    q = task.get("q", "")
+
+    options = task.get("options", "")
+    answer  = task.get("answer", "")
 
     source_text, mode, max_sel = "", "", ""
     if ttype == "highlight" and isinstance(options, dict):
-        source_text = options.get("text","")
-        mode = options.get("mode","word")
-        max_sel = options.get("max_select",3)
-        options = ""  # stored separately
+        source_text = options.get("text", "")
+        mode = options.get("mode", "word")
+        max_sel = options.get("max_select", 3)
+        options = ""
 
     return {
         "QID": qid,
@@ -592,15 +667,15 @@ def row_from_writing(language: str, level: str, writing: Dict[str, Any]) -> Dict
         "Level": level,
         "Section": "Writing",
         "Type": "writing",
-        "Question": writing.get("prompt",""),
+        "Question": writing.get("prompt", ""),
         "Options": "",
         "Answer": "",
         "SourceText": "",
         "Mode": "",
         "MaxSelect": "",
-        "MinWords": int(writing.get("min_words",120)),
-        "MaxWords": int(writing.get("max_words",150)),
-        "Keywords": pipe_join(writing.get("keywords",[])),
+        "MinWords": int(writing.get("min_words", 120)),
+        "MaxWords": int(writing.get("max_words", 150)),
+        "Keywords": pipe_join(writing.get("keywords", [])),
         "UpdatedAt": now_iso(),
     }
 
@@ -612,8 +687,6 @@ def save_exam_to_sheets(language: str, level: str, exam: Dict[str, Any]):
     rows.append(row_from_writing(language, level, exam.get("writing", {})))
 
     dfQ = ws_read_df(SHEET_QUESTIONS, Q_COLS)
-
-    # remove old rows for that language+level
     dfQ = dfQ[~(
         (dfQ["Language"].astype(str).str.strip() == language) &
         (dfQ["Level"].astype(str).str.strip() == level)
@@ -624,7 +697,7 @@ def save_exam_to_sheets(language: str, level: str, exam: Dict[str, Any]):
 
     dfM = ws_read_df(SHEET_META, META_COLS)
     dfM = meta_set(dfM, language, level, "title", exam["meta"].get("title", f"Mega Formation Exam — {language} — {level}"))
-    dfM = meta_set(dfM, language, level, "duration_min", str(exam["meta"].get("duration_min", DEFAULT_DUR.get(level,60))))
+    dfM = meta_set(dfM, language, level, "duration_min", str(exam["meta"].get("duration_min", DEFAULT_DUR.get(level, 60))))
     dfM = meta_set(dfM, language, level, "listening_audio", exam.get("listening", {}).get("audio_path",""))
     dfM = meta_set(dfM, language, level, "listening_transcript", exam.get("listening", {}).get("transcript",""))
     dfM = meta_set(dfM, language, level, "reading_passage", exam.get("reading", {}).get("passage",""))
@@ -645,11 +718,14 @@ def verify_user(username: str, password: str) -> Optional[str]:
         return None
 
     stored = str(hit.iloc[0].get("pass_hash", "")).strip()
-    ok = (stored == pw_hash) if _looks_like_sha256(stored) else (stored == pw)
+    if _looks_like_sha256(stored):
+        ok = (stored == pw_hash)
+    else:
+        ok = (stored == pw)  # allow plain
+
     if not ok:
         return None
-
-    return str(hit.iloc[0].get("role", "")).strip() or None
+    return str(hit.iloc[0].get("role","")).strip() or None
 
 # ---------------- Candidates ----------------
 def admin_create_candidate(phone: str, language: str, level: str, branch: str, created_by: str, pass_plain: Optional[str]=None) -> str:
@@ -657,8 +733,6 @@ def admin_create_candidate(phone: str, language: str, level: str, branch: str, c
     pwd = pass_plain or make_password(8)
 
     df = ws_read_df(SHEET_CANDIDATES, CAND_COLS)
-
-    # reset last record per phone+language
     df = df[~(
         (df["phone"].astype(str).str.strip() == phone) &
         (df["language"].astype(str).str.strip() == language)
@@ -704,7 +778,7 @@ def verify_candidate_login(phone: str, password: str, language: str):
         "phone": phone,
         "language": str(row.get("language","English")),
         "level": str(row.get("level","B1")),
-        "branch": str(row.get("branch","MB"))
+        "branch": str(row.get("branch","MB")),
     }
     return payload, None
 
@@ -756,33 +830,10 @@ def score_section_percent(tasks, user_map):
 
 def score_writing_pct(text, min_w, max_w, keywords):
     wc = len((text or "").split())
-    base = 40 if (min_w and max_w and min_w <= wc <= max_w) else (20 if wc>0 else 0)
+    base = 40 if (min_w and max_w and min_w <= wc <= max_w) else (20 if wc > 0 else 0)
     hits = sum(1 for k in (keywords or []) if k.lower() in (text or "").lower())
     kw_score = min(60, hits*12)
     return float(min(100, base + kw_score)), wc, hits
-def generate_review_pdf(candidate_name, exam, answers, file_path):
-    styles = getSampleStyleSheet()
-    doc = SimpleDocTemplate(file_path, pagesize=A4)
-    elements = []
-
-    elements.append(Paragraph("Mega Formation - Exam Review", styles['Title']))
-    elements.append(Spacer(1,12))
-    elements.append(Paragraph(f"Candidate: {candidate_name}", styles['Normal']))
-    elements.append(Spacer(1,12))
-
-    data = [["Question","Your Answer","Correct Answer"]]
-
-    for sec in ["listening","reading","use"]:
-        tasks = exam[sec]["tasks"]
-        for i,t in enumerate(tasks):
-            your = answers.get(sec.capitalize(),{}).get(i,"")
-            correct = t.get("answer","")
-            data.append([t.get("q",""), str(your), str(correct)])
-
-    table = Table(data)
-    elements.append(table)
-
-    doc.build(elements)
 
 # ---------------- Results ----------------
 def save_result_row(branch_code: str, row: Dict[str, Any]):
@@ -791,20 +842,21 @@ def save_result_row(branch_code: str, row: Dict[str, Any]):
 
 # ---------------- Session state ----------------
 def init_state():
-    st.session_state.setdefault("role", "candidate")  # candidate/admin/employee
+    st.session_state.setdefault("role", "candidate")
     st.session_state.setdefault("user", "")
     st.session_state.setdefault("candidate_ok", False)
     st.session_state.setdefault("candidate_payload", None)
     st.session_state.setdefault("candidate_started", False)
     st.session_state.setdefault("deadline", None)
     st.session_state.setdefault("exam", None)
-    st.session_state.setdefault("answers", {s:{} for s in SECTIONS_KEYS})
+    st.session_state.setdefault("answers", {s:{} for s in SECTIONS})
     st.session_state.setdefault("last_candidate", None)
+    st.session_state.setdefault("last_submission", None)  # for Admin PDF
 init_state()
 
 # ---------------- Safe bootstrap ----------------
 try:
-    _ = bootstrap_and_load_all()
+    bootstrap_and_load_all()
 except Exception as e:
     st.error("❌ Google Sheets: فشل الاتصال.")
     st.code(str(e))
@@ -812,13 +864,13 @@ except Exception as e:
         "✅ Check-list:\n\n"
         "1) SPREADSHEET_ID صحيح\n"
         "2) Share للSheet مع service account email (Editor)\n"
-        "3) secrets: private_key فيها \\n (والكود يصلّحهم)\n"
+        "3) secrets: private_key فيها \\n\n"
         "4) Sheets API + Drive API enabled\n\n"
         "إذا المشكلة Quota 429: استنى شوية أو قلّل reruns."
     )
     st.stop()
 
-# ---------------- Top logos + header ----------------
+# ---------------- Header (logos) ----------------
 c1, c2, c3 = st.columns([1,2,1])
 with c1:
     try:
@@ -834,6 +886,7 @@ with c3:
         st.empty()
 
 st.markdown("<h1 style='text-align:center;margin-bottom:0'>ACBPT — Exams Platform</h1>", unsafe_allow_html=True)
+st.caption("Employee builds questions → Google Sheets | Admin creates candidate passwords | Candidates take exam | Results saved per branch")
 
 # ---------------- Sidebar: Login ----------------
 with st.sidebar:
@@ -865,8 +918,7 @@ with st.sidebar:
                 st.error("Login failed.")
 
     with tab_cand:
-        st.caption("الرجاء إدخال اللوغين و الباسورد للإجراء الإمتحان.")
-        st.caption("اختر Candidate من شمال الشاشة وحط اللوغين و الباسوورد.")
+        st.caption("الرجاء إدخال اللوغين و الباسورد للإجراء الإمتحان / Please login / Veuillez vous connecter")
         lang_c = st.selectbox("Language", LANGUAGES, key="cand_lang")
         phone = st.text_input("Phone", key="cand_phone")
         pwd   = st.text_input("Password", type="password", key="cand_pwd")
@@ -878,7 +930,7 @@ with st.sidebar:
             else:
                 st.session_state.candidate_ok = True
                 st.session_state.candidate_payload = payload
-                st.success("OK ✅ You can start now.")
+                st.success("OK ✅")
 
     if st.session_state.role in ("admin","employee"):
         if st.button("Logout", key="logout_any"):
@@ -889,8 +941,9 @@ with st.sidebar:
             st.session_state.candidate_started = False
             st.session_state.deadline = None
             st.session_state.exam = None
-            st.session_state.answers = {s:{} for s in SECTIONS_KEYS}
+            st.session_state.answers = {s:{} for s in SECTIONS}
             st.session_state.last_candidate = None
+            st.session_state.last_submission = None
             st.success("Logged out ✅")
 
 # ---------------- Employee Panel ----------------
@@ -898,13 +951,10 @@ def load_exam_for_edit(language: str, level: str) -> Dict[str, Any]:
     exam = load_exam_from_sheets(language, level)
     if not exam:
         exam = {
-            "meta": {
-                "title": f"Mega Formation Exam — {language} — {level}",
-                "language": language,
-                "level": level,
-                "duration_min": DEFAULT_DUR.get(level,60),
-                "exam_id": f"GS_{language}_{level}"
-            },
+            "meta": {"title": f"Mega Formation Exam — {language} — {level}",
+                     "language": language, "level": level,
+                     "duration_min": DEFAULT_DUR.get(level, 60),
+                     "exam_id": f"GS_{language}_{level}"},
             "listening": {"audio_path": "", "transcript": "", "tasks": []},
             "reading": {"passage": "", "tasks": []},
             "use": {"tasks": []},
@@ -923,8 +973,6 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
             q     = st.text_area("Question / Prompt", key=f"{section_key}_new_q")
 
             options, correct = [], None
-            source_text, mode, max_sel = "", "word", 3
-
             if itype in ("radio","checkbox"):
                 opts_raw = st.text_area("Options (one per line)", key=f"{section_key}_new_opts")
                 options  = [o.strip() for o in opts_raw.splitlines() if o.strip()]
@@ -932,12 +980,15 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
                     correct = st.selectbox("Correct option", options, index=0 if options else None, key=f"{section_key}_new_corr_radio")
                 else:
                     correct = st.multiselect("Correct options", options, default=[], key=f"{section_key}_new_corr_ck")
+
             elif itype == "tfn":
                 options = ["T","F","NG"]
                 correct = st.selectbox("Correct", options, index=0, key=f"{section_key}_new_corr_tfn")
+
             elif itype == "text":
-                kw_raw = st.text_input("Keywords (comma-separated)", key=f"{section_key}_new_corr_txt", placeholder="since, was, paid")
+                kw_raw = st.text_input("Keywords (comma-separated)", key=f"{section_key}_new_corr_txt")
                 correct = [k.strip() for k in kw_raw.split(",") if k.strip()]
+
             elif itype == "highlight":
                 source_text = st.text_area("Source text", key=f"{section_key}_new_h_text")
                 mode = st.radio("Selection unit", MODES, horizontal=True, key=f"{section_key}_new_h_mode")
@@ -951,7 +1002,7 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
                 tasks.append({
                     "qid": str(uuid.uuid4()),
                     "type": itype,
-                    "q": q.strip(),
+                    "q": (q or "").strip(),
                     "options": options,
                     "answer": correct
                 })
@@ -960,7 +1011,6 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
         else:
             data = tasks[idx]
             st.subheader(f"{section_key} — Edit task #{idx+1}")
-
             TYPES2 = ["radio","checkbox","text","tfn","highlight"]
             itype = st.selectbox("Type", TYPES2, index=TYPES2.index(data.get("type","radio")), key=f"{section_key}_edit_type_{idx}")
             q = st.text_area("Question / Prompt", value=data.get("q",""), key=f"{section_key}_edit_q_{idx}")
@@ -969,9 +1019,7 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
             correct = data.get("answer", [])
 
             if itype in ("radio","checkbox"):
-                opts_raw = st.text_area("Options (one per line)",
-                                        value="\n".join(options if isinstance(options,list) else []),
-                                        key=f"{section_key}_edit_opts_{idx}")
+                opts_raw = st.text_area("Options (one per line)", value="\n".join(options if isinstance(options,list) else []), key=f"{section_key}_edit_opts_{idx}")
                 options  = [o.strip() for o in opts_raw.splitlines() if o.strip()]
                 if itype == "radio":
                     ix = options.index(correct) if (correct in options) else (0 if options else 0)
@@ -994,59 +1042,50 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
             elif itype == "highlight":
                 opts = options if isinstance(options, dict) else {}
                 src_text = st.text_area("Source text", value=opts.get("text",""), key=f"{section_key}_edit_h_text_{idx}")
-                mode = st.radio("Selection unit", ["word","sentence"],
-                                index=(0 if (opts.get("mode","word")=="word") else 1),
+                mode = st.radio("Selection unit", ["word","sentence"], index=(0 if (opts.get("mode","word")=="word") else 1),
                                 horizontal=True, key=f"{section_key}_edit_h_mode_{idx}")
-                max_sel = st.number_input("Max selections", value=int(opts.get("max_select",3)),
-                                          min_value=1, step=1, key=f"{section_key}_edit_h_max_{idx}")
+                max_sel = st.number_input("Max selections", value=int(opts.get("max_select",3)), min_value=1, step=1, key=f"{section_key}_edit_h_max_{idx}")
                 tokens = tokenise(src_text, mode)
                 st.caption(f"Preview tokens = {len(tokens)}")
                 corr_default = [c for c in (correct or []) if c in tokens] if isinstance(correct, list) else []
                 correct = st.multiselect("Correct selections", tokens, default=corr_default, key=f"{section_key}_edit_h_corr_{idx}")
                 options = {"text": src_text, "mode": mode, "max_select": int(max_sel)}
 
-            c1, c2 = st.columns(2)
-            with c1:
+            cA, cB = st.columns(2)
+            with cA:
                 if st.button("💾 Save task", key=f"{section_key}_save_{idx}"):
                     tasks[idx] = {"qid": data.get("qid") or str(uuid.uuid4()),
-                                  "type": itype, "q": q.strip(), "options": options, "answer": correct}
+                                  "type": itype, "q": (q or "").strip(), "options": options, "answer": correct}
                     st.success("Saved ✅")
-            with c2:
+            with cB:
                 if st.button("🗑️ Delete task", key=f"{section_key}_del_{idx}"):
                     tasks.pop(idx)
                     st.warning("Deleted ⚠️")
 
 def employee_panel():
     st.subheader("👩‍💼 Employee Panel — Builder")
-
     cL, cR = st.columns([1,2])
     with cL:
         language = st.selectbox("Language", LANGUAGES, key="emp_lang")
     with cR:
-        lvl_label = st.selectbox("Level to edit", LEVELS_ADMIN, key="emp_edit_level")
-        level = PLACEMENT_LEVEL if lvl_label == "Test de Niveau" else lvl_label
+        level_label = st.selectbox("Level to edit", LEVELS_ADMIN, key="emp_edit_level")
+        level = PLACEMENT_LEVEL if level_label == "Test de Niveau" else level_label
 
     exam = load_exam_for_edit(language, level)
 
     st.markdown("#### Exam meta")
     cA,cB = st.columns([2,1])
     with cA:
-        exam["meta"]["title"] = st.text_input("Title", value=exam["meta"].get("title", f"Mega Formation Exam — {language} — {lvl_label}"), key="meta_title")
+        exam["meta"]["title"] = st.text_input("Title", value=exam["meta"].get("title", f"Mega Formation Exam — {language} — {level_label}"), key="meta_title")
     with cB:
-        exam["meta"]["duration_min"] = st.number_input("Duration (min)", min_value=10, step=5,
-                                                       value=int(exam["meta"].get("duration_min", DEFAULT_DUR.get(level,60))),
-                                                       key="meta_dur")
+        exam["meta"]["duration_min"] = st.number_input("Duration (min)", min_value=10, step=5, value=int(exam["meta"].get("duration_min", DEFAULT_DUR.get(level, 60))), key="meta_dur")
 
     st.markdown("#### Listening meta")
-    exam["listening"]["transcript"] = st.text_area("Listening transcript (optional)",
-                                                   value=exam["listening"].get("transcript",""),
-                                                   key="listen_trans")
+    exam["listening"]["transcript"] = st.text_area("Listening transcript (optional)", value=exam["listening"].get("transcript",""), key="listen_trans")
     exam["listening"]["audio_path"] = st.text_input("Listening audio filename (optional)", value=exam["listening"].get("audio_path",""))
 
     st.markdown("#### Reading meta")
-    exam["reading"]["passage"] = st.text_area("Reading passage",
-                                              value=exam["reading"].get("passage",""),
-                                              key="reading_passage")
+    exam["reading"]["passage"] = st.text_area("Reading passage", value=exam["reading"].get("passage",""), key="reading_passage")
 
     st.markdown("---")
     st.markdown("### Listening Tasks")
@@ -1082,17 +1121,15 @@ def employee_panel():
     st.markdown("---")
     if st.button("💾 Save to Google Sheets", type="primary", key="save_level_gs"):
         save_exam_to_sheets(language, level, exam)
-        st.success(f"Saved ✅ → {language} / {lvl_label}")
+        st.success(f"Saved ✅ → {language} / {level_label}")
 
 # ---------------- Admin Panel ----------------
 def admin_panel():
     st.subheader("🛡️ Admin Panel")
-
     tab_cands, tab_results = st.tabs(["👥 Candidates", "📊 Results"])
 
     with tab_cands:
         st.markdown("### Create candidate login (Phone + Password)")
-
         c1,c2,c3,c4 = st.columns(4)
         with c1:
             phone = st.text_input("Candidate phone", key="adm_cand_phone")
@@ -1124,17 +1161,10 @@ def admin_panel():
                     created_by=st.session_state.user,
                     pass_plain=(None if auto_pw else (manual_pw or None))
                 )
-
                 st.success("Candidate created ✅")
                 st.code(
-                    f"Phone: {p}\n"
-                    f"Password: {pwd}\n"
-                    f"Language: {language}\n"
-                    f"Level: {lvl_label}\n"
-                    f"Branch: {BRANCHES[br]}\n"
-                    f"Single-use: YES"
+                    f"Phone: {p}\nPassword: {pwd}\nLanguage: {language}\nLevel: {lvl_label}\nBranch: {BRANCHES[br]}\nSingle-use: YES"
                 )
-
                 st.session_state.last_candidate = {
                     "phone": p, "pwd": pwd, "language": language, "level": level, "level_label": lvl_label, "branch": BRANCHES[br]
                 }
@@ -1210,12 +1240,11 @@ def admin_panel():
         st.dataframe(df_sorted, use_container_width=True)
         st.download_button("⬇️ Download CSV", df_sorted.to_csv(index=False).encode("utf-8"), f"results_{bcode}.csv", "text/csv")
 
-        st.markdown("### 📲 إرسال نتيجة ممتحن على WhatsApp")
-
+        st.markdown("### 📲 Send result via WhatsApp (Arabic + French + English)")
         df_show = df_sorted.head(250).copy()
         options = []
         for idx, rr in df_show.iterrows():
-            label = f"{rr.get('timestamp','')} | {rr.get('name','')} | {rr.get('phone','')} | {rr.get('language','')} | {rr.get('level','')} | {rr.get('overall','')} | {rr.get('pass','')}"
+            label = f"{rr.get('timestamp','')} | {rr.get('name','')} | {rr.get('phone','')} | {rr.get('language','')} | {rr.get('test_type','')} | {rr.get('overall','')} | {rr.get('suggested_level','')}"
             options.append((label, idx))
 
         if options:
@@ -1225,8 +1254,8 @@ def admin_panel():
 
             l, m, r = st.columns([1,2,1])
             with m:
-                if st.button("📩 إرسال النتيجة على WhatsApp", use_container_width=True, key="wa_send_result"):
-                    msg = build_result_msg(row)
+                if st.button("📩 WhatsApp message", use_container_width=True, key="wa_send_result"):
+                    msg = trilang_result_message(row)
                     url = wa_link(row.get("phone",""), msg)
                     st.code(msg)
                     if url:
@@ -1234,19 +1263,44 @@ def admin_panel():
                     else:
                         st.error("رقم الهاتف غير موجود/غلط.")
 
+        st.markdown("---")
+        st.markdown("### 🧾 Generate PDF Review (Questions + Candidate answers + Correction)")
+        st.caption("ملاحظة: الـ PDF يتولد من آخر Submission صار في الـ session هذا (نفس المتصفح/الجلسة).")
+        last = st.session_state.get("last_submission")
+        if not last:
+            st.info("No submission stored in this session yet.")
+        else:
+            if st.button("🧾 Build PDF Review now", type="primary", key="build_pdf_now"):
+                pdf_dir = "reviews"
+                os.makedirs(pdf_dir, exist_ok=True)
+                out_path = os.path.join(pdf_dir, f"review_{last['phone']}_{last['timestamp'].replace(':','-')}.pdf")
+                generate_review_pdf(
+                    out_path=out_path,
+                    candidate_name=last["name"],
+                    phone=last["phone"],
+                    language=last["language"],
+                    level=last["level"],
+                    exam=last["exam"],
+                    answers_state=last["answers"],
+                    scores=last["scores"],
+                    suggested_level=last.get("suggested_level",""),
+                )
+                st.success("PDF ready ✅")
+                with open(out_path, "rb") as f:
+                    st.download_button("⬇️ Download PDF Review", f, file_name=os.path.basename(out_path), mime="application/pdf")
+
 # ---------------- Candidate Exam ----------------
 def render_candidate():
     payload = st.session_state.candidate_payload or {}
-    language_payload = payload.get("language","English")
-    lang_ui = "French" if language_payload == "French" else "English"
-    T = I18N[lang_ui]
-    sec_labels = SECTION_LABELS[lang_ui]
+    cand_language = payload.get("language") or "English"
+    ui_lang = cand_language if cand_language in T else "English"
+    t = T[ui_lang]
 
-    st.subheader(T["candidate_title"])
+    st.subheader(t["candidate_title"])
 
     if not st.session_state.candidate_ok:
-        st.info(T["hint_login_1"])
-        st.caption(T["hint_login_2"])
+        st.info(t["login_hint"])
+        st.caption("Tip: إختار Candidate من شمال الشاشة وحط اللوغين و الباسوورد")
         return
 
     phone = payload.get("phone","")
@@ -1254,27 +1308,27 @@ def render_candidate():
     level = payload.get("level","B1")
     bcode = payload.get("branch","MB")
 
-    level_label = T["test_de_niveau"] if level == PLACEMENT_LEVEL else level
+    level_label = "Test de Niveau" if level == PLACEMENT_LEVEL else level
 
     cA, cB, cC, cD = st.columns([1,1,1,1])
-    with cA: st.markdown(f"**{T['phone']}**: `{phone}`")
-    with cB: st.markdown(f"**{T['language']}**: **{language}**")
-    with cC: st.markdown(f"**{T['level']}**: **{level_label}**")
-    with cD: st.markdown(f"**{T['branch']}**: **{bcode}**")
+    with cA: st.markdown(f"**Phone**: `{phone}`")
+    with cB: st.markdown(f"**Language**: **{language}**")
+    with cC: st.markdown(f"**Level**: **{level_label}**")
+    with cD: st.markdown(f"**Branch**: **{bcode}**")
 
-    name = st.text_input(T["your_name"], key="cand_name_real")
+    name = st.text_input(t["your_name"], key="cand_name_real")
 
     if not st.session_state.candidate_started:
-        if st.button(T["start"], type="primary", key="start_exam"):
+        if st.button(t["start"], type="primary", key="start_exam"):
             exam = load_exam_from_sheets(language, level)
             if not exam:
-                st.error(T["exam_not_ready"])
+                st.error(t["not_prepared"])
                 return
             st.session_state.exam = exam
-            st.session_state.answers = {s:{} for s in SECTIONS_KEYS}
+            st.session_state.answers = {s:{} for s in SECTIONS}
             st.session_state.candidate_started = True
             st.session_state.deadline = datetime.utcnow() + timedelta(minutes=int(exam["meta"]["duration_min"]))
-            st.success(T["started"])
+            st.success("Started ✅")
         return
 
     exam = st.session_state.exam
@@ -1283,11 +1337,18 @@ def render_candidate():
     if st.session_state.deadline:
         left = st.session_state.deadline - datetime.utcnow()
         left_sec = max(0, int(left.total_seconds()))
-        st.markdown(f"**{T['time_left']}**: {left_sec//60:02d}:{left_sec%60:02d}")
+        st.markdown(f"**{t['time_left']}**: {left_sec//60:02d}:{left_sec%60:02d}")
         if left_sec == 0:
-            st.warning(T["time_up"])
+            st.warning("Time is up! Submit now.")
 
-    tabs = st.tabs(sec_labels)
+    # Tabs labels by UI language
+    tab_labels = [
+        t["tab_listening"],
+        t["tab_reading"],
+        t["tab_use"],
+        t["tab_writing"],
+    ]
+    tabs = st.tabs(tab_labels)
 
     # Listening
     with tabs[0]:
@@ -1298,24 +1359,24 @@ def render_candidate():
         if ap:
             st.caption(f"Audio filename (optional): {ap}")
 
-        for i, t in enumerate(L.get("tasks", [])):
+        for i, q in enumerate(L.get("tasks", [])):
             key = f"L_{i}"
-            ttype = t.get("type")
+            ttype = q.get("type")
             if ttype == "radio":
-                st.session_state.answers["Listening"][i] = st.radio(t["q"], t.get("options",[]), index=None, key=key)
+                st.session_state.answers["Listening"][i] = st.radio(q["q"], q.get("options",[]), index=None, key=key)
             elif ttype == "checkbox":
-                st.session_state.answers["Listening"][i] = st.multiselect(t["q"], t.get("options",[]), key=key)
+                st.session_state.answers["Listening"][i] = st.multiselect(q["q"], q.get("options",[]), key=key)
             elif ttype == "tfn":
-                st.session_state.answers["Listening"][i] = st.radio(t["q"], ["T","F","NG"], index=None, key=key)
+                st.session_state.answers["Listening"][i] = st.radio(q["q"], ["T","F","NG"], index=None, key=key)
             elif ttype == "text":
-                st.session_state.answers["Listening"][i] = st.text_input(t["q"], key=key)
+                st.session_state.answers["Listening"][i] = st.text_input(q["q"], key=key)
             elif ttype == "highlight":
-                opts = t.get("options",{})
+                opts = q.get("options",{})
                 tokens = tokenise(opts.get("text",""), opts.get("mode","word"))
                 max_sel = int(opts.get("max_select",3))
-                st.write(t["q"])
+                st.write(q["q"])
                 sel = st.multiselect(
-                    f"Select up to {max_sel} {opts.get('mode','word')}(s):",
+                    f"{t['select_up_to']} {max_sel} {opts.get('mode','word')}(s):",
                     tokens, key=key, max_selections=max_sel
                 )
                 st.session_state.answers["Listening"][i] = sel
@@ -1325,24 +1386,24 @@ def render_candidate():
         R = exam["reading"]
         if R.get("passage"):
             st.info(R["passage"])
-        for i, t in enumerate(R.get("tasks", [])):
+        for i, q in enumerate(R.get("tasks", [])):
             key = f"R_{i}"
-            ttype = t.get("type")
+            ttype = q.get("type")
             if ttype == "radio":
-                st.session_state.answers["Reading"][i] = st.radio(t["q"], t.get("options",[]), index=None, key=key)
+                st.session_state.answers["Reading"][i] = st.radio(q["q"], q.get("options",[]), index=None, key=key)
             elif ttype == "checkbox":
-                st.session_state.answers["Reading"][i] = st.multiselect(t["q"], t.get("options",[]), key=key)
+                st.session_state.answers["Reading"][i] = st.multiselect(q["q"], q.get("options",[]), key=key)
             elif ttype == "tfn":
-                st.session_state.answers["Reading"][i] = st.radio(t["q"], ["T","F","NG"], index=None, key=key)
+                st.session_state.answers["Reading"][i] = st.radio(q["q"], ["T","F","NG"], index=None, key=key)
             elif ttype == "text":
-                st.session_state.answers["Reading"][i] = st.text_input(t["q"], key=key)
+                st.session_state.answers["Reading"][i] = st.text_input(q["q"], key=key)
             elif ttype == "highlight":
-                opts = t.get("options",{})
+                opts = q.get("options",{})
                 tokens = tokenise(opts.get("text",""), opts.get("mode","word"))
                 max_sel = int(opts.get("max_select",3))
-                st.write(t["q"])
+                st.write(q["q"])
                 sel = st.multiselect(
-                    f"Select up to {max_sel} {opts.get('mode','word')}(s):",
+                    f"{t['select_up_to']} {max_sel} {opts.get('mode','word')}(s):",
                     tokens, key=key, max_selections=max_sel
                 )
                 st.session_state.answers["Reading"][i] = sel
@@ -1350,24 +1411,24 @@ def render_candidate():
     # Use of English
     with tabs[2]:
         U = exam["use"]
-        for i, t in enumerate(U.get("tasks", [])):
+        for i, q in enumerate(U.get("tasks", [])):
             key = f"U_{i}"
-            ttype = t.get("type")
+            ttype = q.get("type")
             if ttype == "radio":
-                st.session_state.answers["Use of English"][i] = st.radio(t["q"], t.get("options",[]), index=None, key=key)
+                st.session_state.answers["Use of English"][i] = st.radio(q["q"], q.get("options",[]), index=None, key=key)
             elif ttype == "checkbox":
-                st.session_state.answers["Use of English"][i] = st.multiselect(t["q"], t.get("options",[]), key=key)
+                st.session_state.answers["Use of English"][i] = st.multiselect(q["q"], q.get("options",[]), key=key)
             elif ttype == "tfn":
-                st.session_state.answers["Use of English"][i] = st.radio(t["q"], ["T","F","NG"], index=None, key=key)
+                st.session_state.answers["Use of English"][i] = st.radio(q["q"], ["T","F","NG"], index=None, key=key)
             elif ttype == "text":
-                st.session_state.answers["Use of English"][i] = st.text_input(t["q"], key=key)
+                st.session_state.answers["Use of English"][i] = st.text_input(q["q"], key=key)
             elif ttype == "highlight":
-                opts = t.get("options",{})
+                opts = q.get("options",{})
                 tokens = tokenise(opts.get("text",""), opts.get("mode","word"))
                 max_sel = int(opts.get("max_select",3))
-                st.write(t["q"])
+                st.write(q["q"])
                 sel = st.multiselect(
-                    f"Select up to {max_sel} {opts.get('mode','word')}(s):",
+                    f"{t['select_up_to']} {max_sel} {opts.get('mode','word')}(s):",
                     tokens, key=key, max_selections=max_sel
                 )
                 st.session_state.answers["Use of English"][i] = sel
@@ -1377,21 +1438,21 @@ def render_candidate():
         W = exam["writing"]
         if W.get("prompt"):
             st.write(W["prompt"])
-        st.caption(f"Target: {W.get('min_words',0)}–{W.get('max_words',0)} words")
-        st.session_state.answers["Writing"][0] = st.text_area(T["essay"], height=220, key="W_0")
+        st.caption(f"{t['words_target']}: {W.get('min_words',0)}–{W.get('max_words',0)} words")
+        st.session_state.answers["Writing"][0] = st.text_area(t["essay"] + ":", height=220, key="W_0")
 
     st.markdown("---")
-    if st.button(T["submit"], type="primary", key="submit_exam"):
+    if st.button(t["submit"], type="primary", key="submit_exam"):
+        # score
         L_pct = score_section_percent(exam["listening"]["tasks"], st.session_state.answers["Listening"])
         R_pct = score_section_percent(exam["reading"]["tasks"], st.session_state.answers["Reading"])
         U_pct = score_section_percent(exam["use"]["tasks"], st.session_state.answers["Use of English"])
 
         W = exam["writing"]
-        W_text = st.session_state.answers["Writing"].get(0,"")
-        W_pct, _, _ = score_writing_pct(W_text, W.get("min_words",0), W.get("max_words",0), W.get("keywords",[]))
+        W_text = st.session_state.answers["Writing"].get(0, "")
+        W_pct, wc, hits = score_writing_pct(W_text, W.get("min_words",0), W.get("max_words",0), W.get("keywords",[]))
 
         overall = round((L_pct + R_pct + U_pct + W_pct)/4, 1)
-
         test_type = "PLACEMENT" if level == PLACEMENT_LEVEL else "EXAM"
         suggested = placement_suggest(overall) if test_type == "PLACEMENT" else ""
         passed = "PASS" if overall >= PASS_MARK else "FAIL"
@@ -1402,35 +1463,52 @@ def render_candidate():
             "phone": phone,
             "branch": bcode,
             "language": language,
-            "level": level if test_type == "EXAM" else PLACEMENT_LEVEL,
+            "level": (PLACEMENT_LEVEL if test_type == "PLACEMENT" else level),
             "test_type": test_type,
             "suggested_level": suggested,
             "exam_id": exam["meta"].get("exam_id",""),
             "overall": overall,
-            "pass": passed if test_type == "EXAM" else "DONE",
+            "pass": ("DONE" if test_type == "PLACEMENT" else passed),
             "Listening": L_pct,
             "Reading": R_pct,
             "Use_of_English": U_pct,
             "Writing": W_pct,
         }
 
+        # save
         save_result_row(bcode, row)
         mark_candidate_used(phone, language)
-        pdf_path = f"{phone}_review.pdf"
+
+        # store last submission in this session (for Admin PDF generation)
+        st.session_state.last_submission = {
+            "timestamp": row["timestamp"],
+            "name": row["name"],
+            "phone": phone,
+            "language": language,
+            "level": row["level"],
+            "test_type": test_type,
+            "suggested_level": suggested,
+            "exam": exam,
+            "answers": st.session_state.answers,
+            "scores": {
+                "overall": overall,
+                "Listening": L_pct,
+                "Reading": R_pct,
+                "Use_of_English": U_pct,
+                "Writing": W_pct,
+            }
+        }
+
+        # reset candidate session
         st.session_state.candidate_started = False
         st.session_state.deadline = None
         st.session_state.exam = None
-        st.session_state.answers = {s:{} for s in SECTIONS_KEYS}
+        st.session_state.answers = {s:{} for s in SECTIONS}
         st.session_state.candidate_ok = False
         st.session_state.candidate_payload = None
 
-        if test_type == "PLACEMENT":
-            st.success("✅ تم إرسال إجابتك بنجاح. / ✅ Your submission was sent successfully. / ✅ Votre test a été envoyé avec succès.")
-            st.caption("📩 النتيجة سيتم إرسالها لك لاحقًا من طرف الإدارة. / 📩 Your result will be sent to you shortly by the administration. / 📩 Votre résultat vous sera envoyé prochainement par l’administration.")
-
-        else:
-            st.success(T["done_exam"])
-
+        # IMPORTANT: no score/level shown to candidate
+        st.success(t["done"])
         st.stop()
 
 # ---------------- Router ----------------
@@ -1440,9 +1518,3 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
-
-
-
-
-
-
