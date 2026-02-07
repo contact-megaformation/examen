@@ -1417,11 +1417,6 @@ def render_candidate():
         save_result_row(bcode, row)
         mark_candidate_used(phone, language)
         pdf_path = f"{phone}_review.pdf"
-generate_review_pdf(name, exam, st.session_state.answers, pdf_path)
-
-with open(pdf_path, "rb") as f:
-    st.download_button("Download Correction PDF", f, file_name=pdf_path)
-
         st.session_state.candidate_started = False
         st.session_state.deadline = None
         st.session_state.exam = None
@@ -1445,6 +1440,7 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
 
 
