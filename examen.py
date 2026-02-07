@@ -27,6 +27,9 @@ from typing import Dict, List, Any, Optional
 
 import streamlit as st
 import pandas as pd
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4
 import gspread
 from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
@@ -757,6 +760,29 @@ def score_writing_pct(text, min_w, max_w, keywords):
     hits = sum(1 for k in (keywords or []) if k.lower() in (text or "").lower())
     kw_score = min(60, hits*12)
     return float(min(100, base + kw_score)), wc, hits
+def generate_review_pdf(candidate_name, exam, answers, file_path):
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(file_path, pagesize=A4)
+    elements = []
+
+    elements.append(Paragraph("Mega Formation - Exam Review", styles['Title']))
+    elements.append(Spacer(1,12))
+    elements.append(Paragraph(f"Candidate: {candidate_name}", styles['Normal']))
+    elements.append(Spacer(1,12))
+
+    data = [["Question","Your Answer","Correct Answer"]]
+
+    for sec in ["listening","reading","use"]:
+        tasks = exam[sec]["tasks"]
+        for i,t in enumerate(tasks):
+            your = answers.get(sec.capitalize(),{}).get(i,"")
+            correct = t.get("answer","")
+            data.append([t.get("q",""), str(your), str(correct)])
+
+    table = Table(data)
+    elements.append(table)
+
+    doc.build(elements)
 
 # ---------------- Results ----------------
 def save_result_row(branch_code: str, row: Dict[str, Any]):
@@ -1390,6 +1416,11 @@ def render_candidate():
 
         save_result_row(bcode, row)
         mark_candidate_used(phone, language)
+        pdf_path = f"{phone}_review.pdf"
+generate_review_pdf(name, exam, st.session_state.answers, pdf_path)
+
+with open(pdf_path, "rb") as f:
+    st.download_button("Download Correction PDF", f, file_name=pdf_path)
 
         st.session_state.candidate_started = False
         st.session_state.deadline = None
@@ -1414,6 +1445,7 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
 
 
