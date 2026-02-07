@@ -808,7 +808,6 @@ with c3:
         st.empty()
 
 st.markdown("<h1 style='text-align:center;margin-bottom:0'>ACBPT — Exams Platform</h1>", unsafe_allow_html=True)
-st.caption("Employee builds questions → Google Sheets | Admin creates candidate passwords | Candidates take exam | Results saved per branch")
 
 # ---------------- Sidebar: Login ----------------
 with st.sidebar:
@@ -1415,4 +1414,5 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
