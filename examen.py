@@ -51,10 +51,10 @@ PASS_MARK = 60.0  # success threshold for EXAM (not placement)
 
 # Placement mapping (CEFR/CECRL) - you can tune bands as you like
 PLACEMENT_BANDS = [
-    (0, 24, "A1"),
-    (25, 44, "A2"),
-    (45, 64, "B1"),
-    (65, 100, "B2"),
+    (0, 29, "A1"),
+    (30, 49, "A2"),
+    (50, 69, "B1"),
+    (70, 100, "B2"),
 ]
 
 # Google Sheets tab names (same Spreadsheet)
@@ -1400,8 +1400,9 @@ def render_candidate():
         st.session_state.candidate_payload = None
 
         if test_type == "PLACEMENT":
-            st.success(f"{T['done_level_prefix']} **{suggested}**")
-            st.caption(T["team_contact"])
+            st.success("✅ تم إرسال إجابتك بنجاح. / ✅ Your submission was sent successfully. / ✅ Votre test a été envoyé avec succès.")
+            st.caption("📩 النتيجة سيتم إرسالها لك لاحقًا من طرف الإدارة. / 📩 Your result will be sent to you shortly by the administration. / 📩 Votre résultat vous sera envoyé prochainement par l’administration.")
+
         else:
             st.success(T["done_exam"])
 
@@ -1414,3 +1415,4 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
