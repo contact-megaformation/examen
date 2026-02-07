@@ -30,7 +30,60 @@ import pandas as pd
 import gspread
 from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4
 
+def generate_review_pdf(candidate_name, exam, answers, file_path):
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(file_path, pagesize=A4)
+    elements = []
+
+    elements.append(Paragraph(f"Mega Formation - Exam Review", styles['Title']))
+    elements.append(Spacer(1,12))
+    elements.append(Paragraph(f"Candidate: {candidate_name}", styles['Normal']))
+    elements.append(Spacer(1,12))
+
+    data = [["Question","Your Answer","Correct Answer"]]
+
+    for sec in ["listening","reading","use"]:
+        tasks = exam[sec]["tasks"]
+        for i,t in enumerate(tasks):
+            your = answers.get(sec.capitalize(),{}).get(i,"")
+            correct = t.get("answer","")
+            data.append([t.get("q",""), str(your), str(correct)])
+
+    table = Table(data)
+    elements.append(table)
+
+    doc.build(elements)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4
+
+def generate_review_pdf(candidate_name, exam, answers, file_path):
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(file_path, pagesize=A4)
+    elements = []
+
+    elements.append(Paragraph(f"Mega Formation - Exam Review", styles['Title']))
+    elements.append(Spacer(1,12))
+    elements.append(Paragraph(f"Candidate: {candidate_name}", styles['Normal']))
+    elements.append(Spacer(1,12))
+
+    data = [["Question","Your Answer","Correct Answer"]]
+
+    for sec in ["listening","reading","use"]:
+        tasks = exam[sec]["tasks"]
+        for i,t in enumerate(tasks):
+            your = answers.get(sec.capitalize(),{}).get(i,"")
+            correct = t.get("answer","")
+            data.append([t.get("q",""), str(your), str(correct)])
+
+    table = Table(data)
+    elements.append(table)
+
+    doc.build(elements)
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
 
@@ -1414,5 +1467,6 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
+
 
 
