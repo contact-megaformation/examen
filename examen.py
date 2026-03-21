@@ -1064,6 +1064,7 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
 
 def employee_panel():
     st.subheader("👩‍💼 Employee Panel — Builder")
+
     cL, cR = st.columns([1,2])
     with cL:
         language = st.selectbox("Language", LANGUAGES, key="emp_lang")
@@ -1071,58 +1072,171 @@ def employee_panel():
         level_label = st.selectbox("Level to edit", LEVELS_ADMIN, key="emp_edit_level")
         level = PLACEMENT_LEVEL if level_label == "Test de Niveau" else level_label
 
-    exam = load_exam_for_edit(language, level)
+    # ✅ FIX: حفظ الامتحان في session_state
+    key = f"exam_{language}_{level}"
 
+    if key not in st.session_state:
+        st.session_state[key] = load_exam_for_edit(language, level)
+
+    exam = st.session_state[key]
+
+    # ---------------- META ----------------
     st.markdown("#### Exam meta")
     cA,cB = st.columns([2,1])
     with cA:
-        exam["meta"]["title"] = st.text_input("Title", value=exam["meta"].get("title", f"Mega Formation Exam — {language} — {level_label}"), key="meta_title")
+        exam["meta"]["title"] = st.text_input(
+            "Title",
+            value=exam["meta"].get("title", f"Mega Formation Exam — {language} — {level_label}")
+        )
     with cB:
-        exam["meta"]["duration_min"] = st.number_input("Duration (min)", min_value=10, step=5, value=int(exam["meta"].get("duration_min", DEFAULT_DUR.get(level, 60))), key="meta_dur")
+        exam["meta"]["duration_min"] = st.number_input(
+            "Duration (min)",
+            min_value=10,
+            step=5,
+            value=int(exam["meta"].get("duration_min", DEFAULT_DUR.get(level, 60)))
+        )
 
-    st.markdown("#### Listening meta")
-    exam["listening"]["transcript"] = st.text_area("Listening transcript (optional)", value=exam["listening"].get("transcript",""), key="listen_trans")
-    exam["listening"]["audio_path"] = st.text_input("Listening audio filename (optional)", value=exam["listening"].get("audio_path",""))
-
-    st.markdown("#### Reading meta")
-    exam["reading"]["passage"] = st.text_area("Reading passage", value=exam["reading"].get("passage",""), key="reading_passage")
-
-    st.markdown("---")
+    # ---------------- LISTENING ----------------
     st.markdown("### Listening Tasks")
     tasksL = exam["listening"]["tasks"]
-    for i, t in enumerate(tasksL):
-        with st.expander(f"Task {i+1} — {t.get('type','')} — {t.get('q','')[:60]}"):
-            render_task_editor("Listening", tasksL, idx=i)
-    render_task_editor("Listening", tasksL, idx=None)
 
+    for i, t in enumerate(tasksL):
+        st.write(f"{i+1}. {t['q']}")
+
+    st.markdown("#### ➕ Add Listening Task")
+
+    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="L_type")
+    t_q = st.text_input("Question", key="L_q")
+
+    options = []
+    correct = None
+
+    if t_type in ["radio","checkbox"]:
+        opts_raw = st.text_area("Options (one per line)", key="L_opts")
+        options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+
+        if t_type == "radio":
+            correct = st.selectbox("Correct", options, key="L_corr_radio")
+        else:
+            correct = st.multiselect("Correct", options, key="L_corr_check")
+
+    elif t_type == "tfn":
+        options = ["T","F","NG"]
+        correct = st.selectbox("Correct", options, key="L_corr_tfn")
+
+    elif t_type == "text":
+        correct = st.text_input("Correct answer", key="L_corr_text")
+
+    if st.button("➕ Add Listening Task"):
+        tasksL.append({
+            "qid": str(uuid.uuid4()),
+            "type": t_type,
+            "q": t_q,
+            "options": options,
+            "answer": correct
+        })
+        st.success("Added ✅")
+
+    # ---------------- READING ----------------
     st.markdown("### Reading Tasks")
     tasksR = exam["reading"]["tasks"]
-    for i, t in enumerate(tasksR):
-        with st.expander(f"Task {i+1} — {t.get('type','')} — {t.get('q','')[:60]}"):
-            render_task_editor("Reading", tasksR, idx=i)
-    render_task_editor("Reading", tasksR, idx=None)
 
+    for i, t in enumerate(tasksR):
+        st.write(f"{i+1}. {t['q']}")
+
+    st.markdown("#### ➕ Add Reading Task")
+
+    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="R_type")
+    t_q = st.text_input("Question", key="R_q")
+
+    options = []
+    correct = None
+
+    if t_type in ["radio","checkbox"]:
+        opts_raw = st.text_area("Options", key="R_opts")
+        options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+
+        if t_type == "radio":
+            correct = st.selectbox("Correct", options, key="R_corr_radio")
+        else:
+            correct = st.multiselect("Correct", options, key="R_corr_check")
+
+    elif t_type == "tfn":
+        options = ["T","F","NG"]
+        correct = st.selectbox("Correct", options, key="R_corr_tfn")
+
+    elif t_type == "text":
+        correct = st.text_input("Correct answer", key="R_corr_text")
+
+    if st.button("➕ Add Reading Task"):
+        tasksR.append({
+            "qid": str(uuid.uuid4()),
+            "type": t_type,
+            "q": t_q,
+            "options": options,
+            "answer": correct
+        })
+        st.success("Added ✅")
+
+    # ---------------- USE OF ENGLISH ----------------
     st.markdown("### Use of English Tasks")
     tasksU = exam["use"]["tasks"]
-    for i, t in enumerate(tasksU):
-        with st.expander(f"Task {i+1} — {t.get('type','')} — {t.get('q','')[:60]}"):
-            render_task_editor("Use of English", tasksU, idx=i)
-    render_task_editor("Use of English", tasksU, idx=None)
 
+    for i, t in enumerate(tasksU):
+        st.write(f"{i+1}. {t['q']}")
+
+    st.markdown("#### ➕ Add Use Task")
+
+    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="U_type")
+    t_q = st.text_input("Question", key="U_q")
+
+    options = []
+    correct = None
+
+    if t_type in ["radio","checkbox"]:
+        opts_raw = st.text_area("Options", key="U_opts")
+        options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+
+        if t_type == "radio":
+            correct = st.selectbox("Correct", options, key="U_corr_radio")
+        else:
+            correct = st.multiselect("Correct", options, key="U_corr_check")
+
+    elif t_type == "tfn":
+        options = ["T","F","NG"]
+        correct = st.selectbox("Correct", options, key="U_corr_tfn")
+
+    elif t_type == "text":
+        correct = st.text_input("Correct answer", key="U_corr_text")
+
+    if st.button("➕ Add Use Task"):
+        tasksU.append({
+            "qid": str(uuid.uuid4()),
+            "type": t_type,
+            "q": t_q,
+            "options": options,
+            "answer": correct
+        })
+        st.success("Added ✅")
+
+    # ---------------- WRITING ----------------
     st.markdown("### Writing")
     W = exam["writing"]
-    W["prompt"] = st.text_area("Writing prompt", value=W.get("prompt",""), key="w_prompt")
-    c1,c2 = st.columns(2)
-    W["min_words"] = c1.number_input("Min words", value=int(W.get("min_words",120)), min_value=0, step=5, key="w_min")
-    W["max_words"] = c2.number_input("Max words", value=int(W.get("max_words",150)), min_value=0, step=5, key="w_max")
-    kraw = st.text_input("Keywords (comma-separated)", value=", ".join(W.get("keywords",[])), key="w_kw")
-    W["keywords"] = [k.strip() for k in kraw.split(",") if k.strip()]
 
+    W["prompt"] = st.text_area("Prompt", value=W.get("prompt",""))
+    W["min_words"] = st.number_input("Min words", value=120)
+    W["max_words"] = st.number_input("Max words", value=150)
+
+    # ---------------- SAVE ----------------
     st.markdown("---")
-    if st.button("💾 Save to Google Sheets", type="primary", key="save_level_gs"):
-        save_exam_to_sheets(language, level, exam)
-        st.success(f"Saved ✅ → {language} / {level_label}")
+    if st.button("💾 Save to Google Sheets", type="primary"):
 
+        save_exam_to_sheets(language, level, exam)
+
+        # ✅ مهم: reset بعد save
+        st.session_state.pop(key, None)
+
+        st.success("Saved to Google Sheets ✅")
 # ---------------- Admin Panel ----------------
 def admin_panel():
     st.subheader("🛡️ Admin Panel")
