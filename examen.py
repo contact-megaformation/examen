@@ -604,6 +604,9 @@ def load_exam_from_sheets(language: str, level: str) -> Optional[Dict[str, Any]]
         elif ttype == "highlight":
             src = str(r["SourceText"])
             mode = str(r["Mode"] or "word").strip() or "word"
+        elif ttype == "ordering":
+            txt = st.text_input(q["q"], key=key)
+            st.session_state.answers["Listening"][i] = txt.split()    
             try:
                 mx = int(float(r["MaxSelect"])) if str(r["MaxSelect"]).strip() else 3
             except Exception:
@@ -812,15 +815,21 @@ def score_item_pct(item, user_val):
         raw = (tp - 0.5*fp) / max(1, len(corr))
         return max(0.0, min(1.0, raw))*100.0
 
-    if itype == "text":
-        kws = [k.strip().lower() for k in (correct or []) if k.strip()]
-        txt = (user_val or "").strip().lower()
-        if not kws:
-            return 100.0 if txt else 0.0
-        hits = sum(1 for k in kws if k in txt)
-        return (hits/len(kws))*100.0
+   if itype == "text":
+    kws = [k.strip().lower() for k in (correct or []) if k.strip()]
+    txt = (user_val or "").strip().lower()
 
-    return 0.0
+    if not kws:
+        return 100.0 if txt else 0.0
+
+    hits = sum(1 for k in kws if k in txt)
+    score = (hits/len(kws))*100.0
+
+    # bonus if length good
+    if len(txt.split()) > 5:
+        score += 10
+
+    return min(score, 100)
 
 def score_section_percent(tasks, user_map):
     q_pcts = []
