@@ -1052,7 +1052,7 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
             elif itype == "text":
                 kw_txt = ", ".join(correct) if isinstance(correct, list) else ""
                 kw_raw = st.text_input("Keywords (comma-separated)", value=kw_txt, key=f"{section_key}_edit_corr_txt_{idx}")
-                opts_raw = st.text_area("Options (one per line)") options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+                options = []
                 correct = [k.strip() for k in kw_raw.split(",") if k.strip()]
 
             elif itype == "highlight":
@@ -1124,7 +1124,7 @@ def employee_panel():
     t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="L_type")
     t_q = st.text_input("Question", key="L_q")
 
-    opts_raw = st.text_area("Options (one per line)") options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+    options = []
     correct = None
 
     if t_type in ["radio","checkbox"]:
@@ -1165,7 +1165,7 @@ def employee_panel():
     t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="R_type")
     t_q = st.text_input("Question", key="R_q")
 
-    opts_raw = st.text_area("Options (one per line)") options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+    options = []
     correct = None
 
     if t_type in ["radio","checkbox"]:
@@ -1206,7 +1206,7 @@ def employee_panel():
     t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="U_type")
     t_q = st.text_input("Question", key="U_q")
 
-    opts_raw = st.text_area("Options (one per line)") options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+    options = []
     correct = None
 
     if t_type in ["radio","checkbox"]:
@@ -1372,7 +1372,7 @@ def admin_panel():
 
         st.markdown("### 📲 Send result via WhatsApp (Arabic + French + English)")
         df_show = df_sorted.head(250).copy()
-        opts_raw = st.text_area("Options (one per line)") options = [o.strip() for o in opts_raw.splitlines() if o.strip()]
+        options = []
         for idx, rr in df_show.iterrows():
             label = f"{rr.get('timestamp','')} | {rr.get('name','')} | {rr.get('phone','')} | {rr.get('language','')} | {rr.get('test_type','')} | {rr.get('overall','')} | {rr.get('suggested_level','')}"
             options.append((label, idx))
