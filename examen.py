@@ -607,12 +607,7 @@ def load_exam_from_sheets(language: str, level: str) -> Optional[Dict[str, Any]]
         elif ttype == "ordering":
             task["options"] = split_pipe(str(r["Options"]))
             task["answer"] = split_pipe(str(r["Answer"]))    
-            try:
-                mx = int(float(r["MaxSelect"])) if str(r["MaxSelect"]).strip() else 3
-            except Exception:
-                mx = 3
-            task["options"] = {"text": src, "mode": mode, "max_select": mx}
-            task["answer"] = split_pipe(str(r["Answer"]))
+
         else:
             continue
 
@@ -801,7 +796,8 @@ def mark_candidate_used(phone: str, language: str):
 def score_item_pct(item, user_val):
     itype = item.get("type")
     correct = item.get("answer")
-
+    if itype == "ordering":
+        return 100.0 if (user_val == correct) else 0.0
     if itype in ("radio","tfn"):
         return 100.0 if (user_val is not None and user_val == correct) else 0.0
 
@@ -1140,7 +1136,26 @@ def employee_panel():
 
     elif t_type == "text":
         correct = st.text_input("Correct answer", key="L_corr_text")
+    elif ttype == "ordering":
+        st.write(q["q"])
 
+        words = q.get("options", [])
+        shuffled = words.copy()
+        random.shuffle(shuffled)
+
+        user = st.multiselect(
+        "رتّب الكلمات بالترتيب الصحيح:",
+            shuffled,
+            key=key
+        )
+
+        st.session_state.answers["Listening"][i] = user
+    ap = L.get("audio_path","")
+    if ap:
+        try:
+            st.audio(ap)
+        except:
+            st.caption(f"Audio: {ap}")    
     if st.button("➕ Add Listening Task"):
         tasksL.append({
             "qid": str(uuid.uuid4()),
@@ -1181,7 +1196,20 @@ def employee_panel():
 
     elif t_type == "text":
         correct = st.text_input("Correct answer", key="R_corr_text")
+    elif ttype == "ordering":
+        st.write(q["q"])
 
+        words = q.get("options", [])
+        shuffled = words.copy()
+        random.shuffle(shuffled)
+
+        user = st.multiselect(
+        "رتّب الكلمات:",
+            shuffled,
+            key=key
+        )
+
+    st.session_state.answers["Reading"][i] = user
     if st.button("➕ Add Reading Task"):
         tasksR.append({
             "qid": str(uuid.uuid4()),
@@ -1222,7 +1250,20 @@ def employee_panel():
 
     elif t_type == "text":
         correct = st.text_input("Correct answer", key="U_corr_text")
+    elif ttype == "ordering":
+        st.write(q["q"])
 
+        words = q.get("options", [])
+        shuffled = words.copy()
+        random.shuffle(shuffled)
+
+        user = st.multiselect(
+        "رتّب الجملة:",
+            shuffled,
+            key=key
+        )
+
+    st.session_state.answers["Use of English"][i] = user
     if st.button("➕ Add Use Task"):
         tasksU.append({
             "qid": str(uuid.uuid4()),
