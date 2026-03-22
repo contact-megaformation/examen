@@ -815,21 +815,21 @@ def score_item_pct(item, user_val):
         raw = (tp - 0.5*fp) / max(1, len(corr))
         return max(0.0, min(1.0, raw))*100.0
 
-   if itype == "text":
-    kws = [k.strip().lower() for k in (correct or []) if k.strip()]
-    txt = (user_val or "").strip().lower()
+    if itype == "text":
+        kws = [k.strip().lower() for k in (correct or []) if k.strip()]
+        txt = (user_val or "").strip().lower()
 
-    if not kws:
-        return 100.0 if txt else 0.0
+        if not kws:
+            return 100.0 if txt else 0.0
 
-    hits = sum(1 for k in kws if k in txt)
-    score = (hits/len(kws))*100.0
+        hits = sum(1 for k in kws if k in txt)
+        score = (hits/len(kws))*100.0
 
-    # bonus if length good
-    if len(txt.split()) > 5:
-        score += 10
+        # bonus if length good
+        if len(txt.split()) > 5:
+            score += 10
 
-    return min(score, 100)
+        return min(score, 100)
 
 def score_section_percent(tasks, user_map):
     q_pcts = []
@@ -1134,7 +1134,7 @@ def employee_panel():
         if t_type == "radio":
             correct = st.selectbox("Correct", options, key="L_corr_radio")
         else:
-            correct = st.multiselect("Correct", options, key="L_corr_check")
+            correct = st.multiselect("Correct", options or [], key="L_corr_check")
 
     elif t_type == "tfn":
         options = ["T","F","NG"]
