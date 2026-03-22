@@ -33,7 +33,6 @@ from google.oauth2.service_account import Credentials
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
-st.write("NEW VERSION 🔥")
 
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
@@ -604,6 +603,18 @@ def load_exam_from_sheets(language: str, level: str) -> Optional[Dict[str, Any]]
         elif ttype == "highlight":
             src = str(r["SourceText"])
             mode = str(r["Mode"] or "word").strip() or "word"
+
+            try:
+                mx = int(float(r["MaxSelect"])) if str(r["MaxSelect"]).strip() else 3
+            except Exception:
+                mx = 3
+
+            task["options"] = {
+                "text": src,
+                "mode": mode,
+                "max_select": mx
+            }
+            task["answer"] = split_pipe(str(r["Answer"]))
         elif ttype == "ordering":
             task["options"] = split_pipe(str(r["Options"]))
             task["answer"] = split_pipe(str(r["Answer"]))    
@@ -797,7 +808,11 @@ def score_item_pct(item, user_val):
     itype = item.get("type")
     correct = item.get("answer")
     if itype == "ordering":
-        return 100.0 if (user_val == correct) else 0.0
+        if not user_val or not correct:
+            return 0.0
+
+        score = sum(1 for u, c in zip(user_val, correct) if u == c)
+        return (score / len(correct)) * 100.0
     if itype in ("radio","tfn"):
         return 100.0 if (user_val is not None and user_val == correct) else 0.0
 
@@ -1021,7 +1036,7 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
         else:
             data = tasks[idx]
             st.subheader(f"{section_key} — Edit task #{idx+1}")
-            TYPES2 = ["radio","checkbox","text","tfn","highlight"]
+            TYPES2 = ["radio","checkbox","text","tfn","highlight","ordering"]
             itype = st.selectbox("Type", TYPES2, index=TYPES2.index(data.get("type","radio")), key=f"{section_key}_edit_type_{idx}")
             q = st.text_area("Question / Prompt", value=data.get("q",""), key=f"{section_key}_edit_q_{idx}")
 
@@ -1060,7 +1075,16 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
                 corr_default = [c for c in (correct or []) if c in tokens] if isinstance(correct, list) else []
                 correct = st.multiselect("Correct selections", tokens, default=corr_default, key=f"{section_key}_edit_h_corr_{idx}")
                 options = {"text": src_text, "mode": mode, "max_select": int(max_sel)}
+            elif itype == "ordering":
+                words_txt = "\n".join(options if isinstance(options,list) else [])
+                raw = st.text_area("Words", value=words_txt, key=f"{section_key}_edit_ord_{idx}")
+                words = [w.strip() for w in raw.splitlines() if w.strip()]
 
+                ans_txt = " ".join(correct) if isinstance(correct,list) else ""
+                ans = st.text_input("Correct sentence", value=ans_txt, key=f"{section_key}_edit_ord_ans_{idx}")
+
+                options = words
+                correct = ans.split()
             cA, cB = st.columns(2)
             with cA:
                 if st.button("💾 Save task", key=f"{section_key}_save_{idx}"):
@@ -1136,7 +1160,7 @@ def employee_panel():
 
     elif t_type == "text":
         correct = st.text_input("Correct answer", key="L_corr_text")
-    elif ttype == "ordering":
+    elif t_type == "ordering":
         st.write(q["q"])
 
         words = q.get("options", [])
