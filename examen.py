@@ -1121,7 +1121,7 @@ def employee_panel():
 
     st.markdown("#### ➕ Add Listening Task")
 
-    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="L_type")
+    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn","ordering"], key="L_type")
     t_q = st.text_input("Question", key="L_q")
 
     options = []
@@ -1162,7 +1162,7 @@ def employee_panel():
 
     st.markdown("#### ➕ Add Reading Task")
 
-    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="R_type")
+    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn","ordering"], key="R_type")
     t_q = st.text_input("Question", key="R_q")
 
     options = []
@@ -1203,7 +1203,7 @@ def employee_panel():
 
     st.markdown("#### ➕ Add Use Task")
 
-    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn"], key="U_type")
+    t_type = st.selectbox("Type", ["radio","checkbox","text","tfn","ordering"], key="U_type")
     t_q = st.text_input("Question", key="U_q")
 
     options = []
