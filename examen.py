@@ -1,4 +1,3 @@
-st.write("NEW VERSION 🔥")
 # examen.py
 # ------------------------------------------------------------------
 # Mega Formation — Exams (100% Google Sheets / Single Spreadsheet)
@@ -34,7 +33,7 @@ from google.oauth2.service_account import Credentials
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
-
+st.write("NEW VERSION 🔥")
 
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
