@@ -1470,8 +1470,11 @@ def render_candidate():
         if L.get("transcript"):
             st.info(L["transcript"])
         ap = L.get("audio_path","")
-        if ap:
-            st.caption(f"Audio filename (optional): {ap}")
+if ap:
+    try:
+        st.audio(ap)
+    except:
+        st.caption(f"Audio: {ap}")
 
         for i, q in enumerate(L.get("tasks", [])):
             key = f"L_{i}"
