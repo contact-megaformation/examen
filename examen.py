@@ -1150,6 +1150,7 @@ def employee_panel():
         )
 
         st.session_state.answers["Listening"][i] = user
+    L = exam["listening"]
     ap = L.get("audio_path","")
     if ap:
         try:
