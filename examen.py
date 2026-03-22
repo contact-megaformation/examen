@@ -605,8 +605,8 @@ def load_exam_from_sheets(language: str, level: str) -> Optional[Dict[str, Any]]
             src = str(r["SourceText"])
             mode = str(r["Mode"] or "word").strip() or "word"
         elif ttype == "ordering":
-            txt = st.text_input(q["q"], key=key)
-            st.session_state.answers["Listening"][i] = txt.split()    
+            task["options"] = split_pipe(str(r["Options"]))
+            task["answer"] = split_pipe(str(r["Answer"]))    
             try:
                 mx = int(float(r["MaxSelect"])) if str(r["MaxSelect"]).strip() else 3
             except Exception:
@@ -1007,13 +1007,11 @@ def render_task_editor(section_key: str, tasks: List[Dict[str, Any]], idx=None):
                 correct = st.multiselect("Correct selections (exact match)", tokens, default=[], key=f"{section_key}_new_h_corr")
                 options = {"text": source_text, "mode": mode, "max_select": int(max_sel)}
             elif itype == "ordering":
-                words_txt = "\n".join(options if isinstance(options,list) else [])
-                raw = st.text_area("Words", value=words_txt, key=f"{section_key}_edit_ord_{idx}")
-                words = [w.strip() for w in raw.splitlines() if w.strip()]
-                ans_txt = " ".join(correct) if isinstance(correct,list) else ""
-                ans = st.text_input("Correct sentence", value=ans_txt, key=f"{section_key}_edit_ord_ans_{idx}")
-                options = words
-                correct = ans.split()
+                words_raw = st.text_area("Words (one per line)", key=f"{section_key}_new_ord_words")
+                options = [w.strip() for w in words_raw.splitlines() if w.strip()]
+
+                correct_sentence = st.text_input("Correct sentence", key=f"{section_key}_new_ord_correct")
+                correct = correct_sentence.split()
             if st.button("➕ Add task", key=f"{section_key}_add_btn"):
                 tasks.append({
                     "qid": str(uuid.uuid4()),
