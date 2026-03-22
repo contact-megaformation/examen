@@ -1632,4 +1632,3 @@ elif st.session_state.role == "admin":
     admin_panel()
 else:
     render_candidate()
-
