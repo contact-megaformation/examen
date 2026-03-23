@@ -1527,43 +1527,43 @@ def render_candidate():
             st.info(L["transcript"])
         ap = L.get("audio_path","")
 
-if ap:
-    try:
-        st.audio(ap)
-    except:
-        st.caption(f"Audio: {ap}")
+        if ap:
+            try:
+                st.audio(ap)
+            except:
+                st.caption(f"Audio: {ap}")
 
 # 🔥 مهم: الloop تكون OUTSIDE
-for i, q in enumerate(L.get("tasks", [])):
-    key = f"L_{i}"
-    ttype = q.get("type")
+        for i, q in enumerate(L.get("tasks", [])):
+            key = f"L_{i}"
+            ttype = q.get("type")
 
-    if ttype == "radio":
-        st.session_state.answers["Listening"][i] = st.radio(q["q"], q.get("options",[]), index=None, key=key)
+            if ttype == "radio":
+                st.session_state.answers["Listening"][i] = st.radio(q["q"], q.get("options",[]), index=None, key=key)
 
-    elif ttype == "checkbox":
-        st.session_state.answers["Listening"][i] = st.multiselect(q["q"], q.get("options",[]), key=key)
+            elif ttype == "checkbox":
+                st.session_state.answers["Listening"][i] = st.multiselect(q["q"], q.get("options",[]), key=key)
 
-    elif ttype == "tfn":
-        st.session_state.answers["Listening"][i] = st.radio(q["q"], ["T","F","NG"], index=None, key=key)
+            elif ttype == "tfn":
+                st.session_state.answers["Listening"][i] = st.radio(q["q"], ["T","F","NG"], index=None, key=key)
 
-    elif ttype == "text":
-        st.session_state.answers["Listening"][i] = st.text_input(q["q"], key=key)
+            elif ttype == "text":
+                st.session_state.answers["Listening"][i] = st.text_input(q["q"], key=key)
 
-    elif ttype == "highlight":
-        opts = q.get("options",{})
-        tokens = tokenise(opts.get("text",""), opts.get("mode","word"))
-        max_sel = int(opts.get("max_select",3))
+            elif ttype == "highlight":
+                opts = q.get("options",{})
+                tokens = tokenise(opts.get("text",""), opts.get("mode","word"))
+                max_sel = int(opts.get("max_select",3))
 
-        st.write(q["q"])
-        sel = st.multiselect(
-            f"{t['select_up_to']} {max_sel} {opts.get('mode','word')}(s):",
-            tokens,
-            key=key,
-            max_selections=max_sel
-        )
+                st.write(q["q"])
+                sel = st.multiselect(
+                    f"{t['select_up_to']} {max_sel} {opts.get('mode','word')}(s):",
+                    tokens,
+                    key=key,
+                    max_selections=max_sel
+                )
 
-        st.session_state.answers["Listening"][i] = sel
+                st.session_state.answers["Listening"][i] = sel
 
     # Reading
     with tabs[1]:
