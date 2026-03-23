@@ -1131,6 +1131,18 @@ def employee_panel():
         )
 
     # ---------------- LISTENING ----------------
+    st.markdown("### Listening Audio")
+
+    audio_file = st.file_uploader("Upload audio file", type=["mp3","wav"])
+
+    if audio_file is not None:
+        audio_path = f"audio/{audio_file.name}"
+
+        with open(audio_path, "wb") as f:
+            f.write(audio_file.read())
+
+        exam["listening"]["audio_path"] = audio_path
+        st.success("Audio uploaded ✅")
     st.markdown("### Listening Tasks")
     tasksL = exam["listening"]["tasks"]
 
