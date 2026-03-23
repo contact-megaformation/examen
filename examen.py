@@ -1576,7 +1576,21 @@ def render_candidate():
                 )
 
                 st.session_state.answers["Listening"][i] = sel
+            elif ttype == "ordering":
+                words = q.get("options", [])
 
+                shuffled = words.copy()
+                random.shuffle(shuffled)
+
+                st.write(q["q"])
+
+                user = st.multiselect(
+                "رتّب الكلمات:",
+                    shuffled,
+                    key=key
+                )
+
+                st.session_state.answers["Listening"][i] = user
     # Reading
     with tabs[1]:
         R = exam["reading"]
@@ -1603,7 +1617,21 @@ def render_candidate():
                     tokens, key=key, max_selections=max_sel
                 )
                 st.session_state.answers["Reading"][i] = sel
+            elif ttype == "ordering":
+                words = q.get("options", [])
 
+                shuffled = words.copy()
+                random.shuffle(shuffled)
+
+                st.write(q["q"])
+
+                user = st.multiselect(
+        "رتّب الكلمات:",
+                    shuffled,
+                    key=key
+                )
+
+                st.session_state.answers["Reading"][i] = user
     # Use of English
     with tabs[2]:
         U = exam["use"]
@@ -1628,7 +1656,21 @@ def render_candidate():
                     tokens, key=key, max_selections=max_sel
                 )
                 st.session_state.answers["Use of English"][i] = sel
+            elif ttype == "ordering":
+                words = q.get("options", [])
 
+                shuffled = words.copy()
+                random.shuffle(shuffled)
+
+                st.write(q["q"])
+
+                user = st.multiselect(
+        "رتّب الكلمات:",
+                    shuffled,
+                    key=key
+                )
+
+                st.session_state.answers["Use of English"][i] = user
     # Writing
     with tabs[3]:
         W = exam["writing"]
