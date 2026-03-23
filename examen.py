@@ -1161,19 +1161,11 @@ def employee_panel():
     elif t_type == "text":
         correct = st.text_input("Correct answer", key="L_corr_text")
     elif t_type == "ordering":
-        st.write(q["q"])
+        words_raw = st.text_area("Words (one per line)", key="L_order_words")
+        options = [w.strip() for w in words_raw.splitlines() if w.strip()]
 
-        words = q.get("options", [])
-        shuffled = words.copy()
-        random.shuffle(shuffled)
-
-        user = st.multiselect(
-        "رتّب الكلمات بالترتيب الصحيح:",
-            shuffled,
-            key=key
-        )
-
-        st.session_state.answers["Listening"][i] = user
+        correct_sentence = st.text_input("Correct sentence", key="L_order_correct")
+        correct = correct_sentence.split()
     L = exam["listening"]
     ap = L.get("audio_path","")
     if ap:
@@ -1221,20 +1213,12 @@ def employee_panel():
 
     elif t_type == "text":
         correct = st.text_input("Correct answer", key="R_corr_text")
-    elif ttype == "ordering":
-        st.write(q["q"])
+    elif t_type == "ordering":
+        words_raw = st.text_area("Words", key="R_order_words")
+        options = [w.strip() for w in words_raw.splitlines() if w.strip()]
 
-        words = q.get("options", [])
-        shuffled = words.copy()
-        random.shuffle(shuffled)
-
-        user = st.multiselect(
-        "رتّب الكلمات:",
-            shuffled,
-            key=key
-        )
-
-    st.session_state.answers["Reading"][i] = user
+        correct_sentence = st.text_input("Correct sentence", key="R_order_correct")
+        correct = correct_sentence.split()
     if st.button("➕ Add Reading Task"):
         tasksR.append({
             "qid": str(uuid.uuid4()),
@@ -1275,20 +1259,12 @@ def employee_panel():
 
     elif t_type == "text":
         correct = st.text_input("Correct answer", key="U_corr_text")
-    elif ttype == "ordering":
-        st.write(q["q"])
+    elif t_type == "ordering":
+        words_raw = st.text_area("Words", key="U_order_words")
+        options = [w.strip() for w in words_raw.splitlines() if w.strip()]
 
-        words = q.get("options", [])
-        shuffled = words.copy()
-        random.shuffle(shuffled)
-
-        user = st.multiselect(
-        "رتّب الجملة:",
-            shuffled,
-            key=key
-        )
-
-    st.session_state.answers["Use of English"][i] = user
+        correct_sentence = st.text_input("Correct sentence", key="U_order_correct")
+        correct = correct_sentence.split()
     if st.button("➕ Add Use Task"):
         tasksU.append({
             "qid": str(uuid.uuid4()),
