@@ -66,6 +66,7 @@ def upload_audio_to_supabase(file):
     except Exception as e:
         st.error(f"Upload error: {str(e)}")
         return None
+    st.write("KEY START:", st.secrets["SUPABASE_KEY"][:15])    
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
 
