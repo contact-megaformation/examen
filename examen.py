@@ -1152,25 +1152,7 @@ def employee_panel():
         )
 
     # ---------------- LISTENING ----------------
-    st.markdown("### Listening Audio")
-
-    audio_file = st.file_uploader("Upload audio file", type=["mp3","wav"])
-
-    if audio_file is not None:
-        audio_path = f"audio/{audio_file.name}"
-
-        with open(audio_path, "wb") as f:
-            f.write(audio_file.read())
-
-        exam["listening"]["audio_path"] = audio_path
-        st.success("Audio uploaded ✅")
-    st.markdown("### Listening Tasks")
-    tasksL = exam["listening"]["tasks"]
-
-    for i, t in enumerate(tasksL):
-        st.write(f"{i+1}. {t['q']}")
-
-    st.markdown("#### ➕ Add Listening Task")
+        st.markdown("#### ➕ Add Listening Task")
 
     t_type = st.selectbox("Type", ["radio","checkbox","text","tfn","ordering"], key="L_type")
     t_q = st.text_input("Question", key="L_q")
