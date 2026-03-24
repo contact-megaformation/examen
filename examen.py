@@ -33,7 +33,28 @@ from google.oauth2.service_account import Credentials
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
+import requests
 
+def upload_audio_to_supabase(file):
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+    file_name = f"{int(time.time())}_{file.name}"
+
+    url = f"{SUPABASE_URL}/storage/v1/object/exam-audio/{file_name}"
+
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "audio/mpeg"
+    }
+
+    res = requests.post(url, headers=headers, data=file.getvalue())
+
+    if res.status_code in [200, 201]:
+        return f"{SUPABASE_URL}/storage/v1/object/public/exam-audio/{file_name}"
+    else:
+        return None
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
 
@@ -1194,7 +1215,20 @@ def employee_panel():
             "answer": correct
         })
         st.success("Added ✅")
+    st.markdown("### 🎧 Upload Listening Audio")
 
+    uploaded_audio = st.file_uploader("Upload MP3", type=["mp3"])
+
+    if uploaded_audio:
+        with st.spinner("Uploading..."):
+            audio_url = upload_audio_to_supabase(uploaded_audio)
+
+            if audio_url:
+                exam["listening"]["audio_path"] = audio_url
+                st.success("Uploaded to Supabase ✅")
+                st.code(audio_url)
+            else:
+                st.error("Upload failed ❌")
     # ---------------- READING ----------------
     st.markdown("### Reading Tasks")
     tasksR = exam["reading"]["tasks"]
