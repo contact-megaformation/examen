@@ -34,26 +34,37 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
 import requests
+import uuid
 
 def upload_audio_to_supabase(file):
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
 
-    file_name = f"{int(time.time())}_{file.name}"
+        filename = f"{uuid.uuid4()}.mp3"
 
-    url = f"{SUPABASE_URL}/storage/v1/object/exam-audio/{file_name}"
+        upload_url = f"{url}/storage/v1/object/exam-audio/{filename}"
 
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "audio/mpeg"
-    }
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "audio/mpeg"
+        }
 
-    res = requests.post(url, headers=headers, data=file.getvalue())
+        response = requests.post(
+            upload_url,
+            headers=headers,
+            data=file.getvalue()
+        )
 
-    if res.status_code in [200, 201]:
-        return f"{SUPABASE_URL}/storage/v1/object/public/exam-audio/{file_name}"
-    else:
+        if response.status_code in [200, 201]:
+            public_url = f"{url}/storage/v1/object/public/exam-audio/{filename}"
+            return public_url
+        else:
+            st.error(f"Supabase error: {response.text}")
+            return None
+
+    except Exception as e:
+        st.error(f"Upload error: {str(e)}")
         return None
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
