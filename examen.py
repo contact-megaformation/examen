@@ -1163,6 +1163,12 @@ def employee_panel():
         )
 
     # ---------------- LISTENING ----------------
+        st.markdown("### Listening Tasks")
+
+        tasksL = exam["listening"]["tasks"]  # ← هذا مهم
+
+        for i, t in enumerate(tasksL):
+            st.write(f"{i+1}. {t['q']}")
         st.markdown("#### ➕ Add Listening Task")
 
     t_type = st.selectbox("Type", ["radio","checkbox","text","tfn","ordering"], key="L_type")
@@ -1181,7 +1187,7 @@ def employee_panel():
             correct = st.multiselect("Correct", options or [], key="L_corr_check")
 
     elif t_type == "tfn":
-        options = ["T","F","NG"]
+        options = ["True","False","Not Given"]
         correct = st.selectbox("Correct", options, key="L_corr_tfn")
 
     elif t_type == "text":
