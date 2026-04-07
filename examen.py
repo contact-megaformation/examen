@@ -59,6 +59,29 @@ def upload_audio_to_supabase(file):
         if response.status_code in [200, 201]:
             public_url = f"{url}/storage/v1/object/public/exam-audio/{filename}"
             return public_url
+        def build_result_message(data):
+            lang = data.get("language", "English")
+
+            if lang == "English":
+                return f"""
+        ✅ Your exam is completed
+
+        Name: {data['name']}
+        Score: {data['score']}/100
+        Level: {data['level']}
+        Suggested Level: {data['suggested_level']}
+
+        Thank you 🙏
+        """
+
+            elif lang == "French":
+                return f"""
+        ✅ Votre examen est terminé
+
+        Nom: {data['name']}
+        Score: {data['score']}/100
+        Niveau: {data['level']}
+        Niveau suggéré: {data['suggested_level']}    
         else:
             st.error(f"Supabase error: {response.text}")
             return None
@@ -1810,6 +1833,15 @@ def render_candidate():
             },
             suggested_level=suggested
         )
+        msg = build_result_message({
+            "name": row["name"],
+            "score": overall,
+            "level": row["level"],
+            "suggested_level": suggested,
+            "language": language
+        })
+
+        st.success(msg)
         mark_candidate_used(phone, language)
 
         # store last submission in this session (for Admin PDF generation)
