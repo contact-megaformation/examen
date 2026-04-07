@@ -888,9 +888,11 @@ def score_writing_pct(text, min_w, max_w, keywords):
     return float(min(100, base + kw_score)), wc, hits
 
 # ---------------- Results ----------------
+# ---------------- Results ----------------
+
+import requests
+
 def save_to_supabase(data):
-    import requests
-    
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
 
@@ -900,16 +902,19 @@ def save_to_supabase(data):
         "Content-Type": "application/json"
     }
 
-    st.write("🚀 Sending:", data)
-
     res = requests.post(
         f"{url}/rest/v1/exam_results",
         headers=headers,
         json=data
     )
 
-    st.write("📡 Status:", res.status_code)
-    st.write("📡 Response:", res.text)
+    if res.status_code not in [200, 201]:
+        st.error(f"Supabase error: {res.text}")
+
+
+def save_result_row(branch_code: str, row: Dict[str, Any]):
+    target_sheet = SHEET_RES_MB if branch_code == "MB" else SHEET_RES_BZ
+    ws_append_row(target_sheet, row, RESULT_COLS)
 
 # ---------------- Session state ----------------
 def init_state():
