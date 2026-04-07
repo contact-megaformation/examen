@@ -1768,6 +1768,19 @@ def render_candidate():
 
         # save
         save_result_row(bcode, row)
+        save_to_supabase({
+            "phone": phone,
+            "name": row["name"],
+            "language": language,
+            "level": row["level"],
+            "suggested_level": suggested,
+            "score": overall,
+            "listening": L_pct,
+            "reading": R_pct,
+            "use_of_english": U_pct,
+            "writing": W_pct,
+            "answers": st.session_state.answers
+        })
         mark_candidate_used(phone, language)
 
         # store last submission in this session (for Admin PDF generation)
