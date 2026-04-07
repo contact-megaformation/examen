@@ -86,9 +86,7 @@ def upload_audio_to_supabase(file):
             st.error(f"Supabase error: {response.text}")
             return None
 
-    except Exception as e:
-        st.error(f"Upload error: {str(e)}")
-        return None
+    
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
 
