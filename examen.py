@@ -1785,6 +1785,23 @@ def render_candidate():
             "writing": W_pct,
             "answers": st.session_state.answers
         })
+        generate_review_pdf(
+            out_path=pdf_path,
+            candidate_name=row["name"],
+            phone=phone,
+            language=language,
+            level=row["level"],
+            exam=exam,
+            answers_state=st.session_state.answers,
+            scores={
+                "overall": overall,
+                "Listening": L_pct,
+                "Reading": R_pct,
+                "Use_of_English": U_pct,
+                "Writing": W_pct
+            },
+            suggested_level=suggested
+        )
         mark_candidate_used(phone, language)
 
         # store last submission in this session (for Admin PDF generation)
