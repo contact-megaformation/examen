@@ -1785,6 +1785,14 @@ def render_candidate():
             "writing": W_pct,
             "answers": st.session_state.answers
         })
+        pdf_dir = "reviews"
+        os.makedirs(pdf_dir, exist_ok=True)
+
+        pdf_path = os.path.join(
+            pdf_dir,
+            f"review_{phone}_{row['timestamp'].replace(':','-')}.pdf"
+        )
+
         generate_review_pdf(
             out_path=pdf_path,
             candidate_name=row["name"],
