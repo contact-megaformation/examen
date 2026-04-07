@@ -888,6 +888,26 @@ def score_writing_pct(text, min_w, max_w, keywords):
     return float(min(100, base + kw_score)), wc, hits
 
 # ---------------- Results ----------------
+import requests
+
+def save_to_supabase(data):
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
+    }
+
+    res = requests.post(
+        f"{url}/rest/v1/exam_results",
+        headers=headers,
+        json=data
+    )
+
+    if res.status_code not in [200, 201]:
+        st.error(f"Supabase error: {res.text}")
 def save_result_row(branch_code: str, row: Dict[str, Any]):
     target_sheet = SHEET_RES_MB if branch_code == "MB" else SHEET_RES_BZ
     ws_append_row(target_sheet, row, RESULT_COLS)
