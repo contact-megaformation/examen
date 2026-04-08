@@ -203,37 +203,38 @@ def trilang_result_message(row: dict) -> str:
     U = row.get("Use_of_English","")
     W = row.get("Writing","")
 
+    # labels حسب اللغة
+    label_L = SECTION_LABELS.get(lang, SECTION_LABELS["English"])["Listening"]
+    label_R = SECTION_LABELS.get(lang, SECTION_LABELS["English"])["Reading"]
+    label_U = SECTION_LABELS.get(lang, SECTION_LABELS["English"])["Use of English"]
+    label_W = SECTION_LABELS.get(lang, SECTION_LABELS["English"])["Writing"]
+
     if test_type == "PLACEMENT":
         return (
-            " نتيجة — Test de Niveau (CECRL/CEFR)\n"
-            lang = row.get("language","English")
-
-            label_L = SECTION_LABELS[lang]["Listening"]
-            label_R = SECTION_LABELS[lang]["Reading"]
-            label_U = SECTION_LABELS[lang]["Use of English"]
-            label_W = SECTION_LABELS[lang]["Writing"]
-
-            f"🎧 {label_L}: {L}\n"
-            f"📖 {label_R}: {R}\n"
-            f"🧠 {label_U}: {U}\n"
-            f"✍️ {label_W}: {W}\n"
+            f"📌 Result — Test de Niveau (CEFR/CECRL)\n"
+            f"👤 Name: {name}\n"
+            f"🌐 Language: {lang}\n"
+            f"📊 Score: {overall}/100\n"
+            f"✅ Suggested level: {suggested}\n\n"
+            f"Details:\n"
+            f"{label_L}: {L}\n"
+            f"{label_R}: {R}\n"
+            f"{label_U}: {U}\n"
+            f"{label_W}: {W}\n"
         )
 
     return (
-        " نتيجة الامتحان / Résultat / Result\n"
-        lang = row.get("language","English")
-
-        label_L = SECTION_LABELS[lang]["Listening"]
-        label_R = SECTION_LABELS[lang]["Reading"]
-        label_U = SECTION_LABELS[lang]["Use of English"]
-        label_W = SECTION_LABELS[lang]["Writing"]
-
-        f"🎧 {label_L}: {L}\n"
-        f"📖 {label_R}: {R}\n"
-        f"🧠 {label_U}: {U}\n"
-        f"✍️ {label_W}: {W}\n"
+        f"📌 Exam Result\n"
+        f"👤 Name: {name}\n"
+        f"🌐 Language: {lang}\n"
+        f"🎯 Level: {level}\n"
+        f"📊 Overall: {overall}/100\n\n"
+        f"Details:\n"
+        f"{label_L}: {L}\n"
+        f"{label_R}: {R}\n"
+        f"{label_U}: {U}\n"
+        f"{label_W}: {W}\n"
     )
-
 # ---------------- Utils ----------------
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
