@@ -59,6 +59,13 @@ def upload_audio_to_supabase(file):
         if response.status_code in [200, 201]:
             public_url = f"{url}/storage/v1/object/public/exam-audio/{filename}"
             return public_url
+        else:
+            st.error(f"Supabase error: {response.text}")
+            return None
+
+    except Exception as e:
+        st.error(f"Upload error: {str(e)}")
+        return None
         def build_result_message(data):
             lang = data.get("language", "English")
 
