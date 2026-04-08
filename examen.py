@@ -63,29 +63,10 @@ def upload_audio_to_supabase(file):
             lang = data.get("language", "English")
 
             if lang == "English":
-                return f"""
-        def build_result_message(data):
-            lang = data.get("language", "English")
-
-            if lang == "English":
-                return f"""Your exam is completed
-
-        Name: {data['name']}
-        Score: {data['score']}/100
-        Level: {data['level']}
-        Suggested Level: {data['suggested_level']}
-
-        Thank you"""
+                return f"Your exam is completed\n\nName: {data['name']}\nScore: {data['score']}/100\nLevel: {data['level']}\nSuggested Level: {data['suggested_level']}\n\nThank you"
 
             elif lang == "French":
-                return f"""Votre examen est terminé
-
-        Nom: {data['name']}
-        Score: {data['score']}/100
-        Niveau: {data['level']}
-        Niveau suggéré: {data['suggested_level']}
-
-        Merci"""
+                return f"Votre examen est terminé\n\nNom: {data['name']}\nScore: {data['score']}/100\nNiveau: {data['level']}\nNiveau suggéré: {data['suggested_level']}\n\nMerci"
     
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
