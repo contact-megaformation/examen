@@ -86,6 +86,20 @@ LEVELS_ADMIN = LEVELS_CORE + ["Test de Niveau"]     # UI label
 LEVELS_SHEETS = LEVELS_CORE + [PLACEMENT_LEVEL]     # stored
 
 SECTIONS = ["Listening", "Reading", "Use of English", "Writing"]
+SECTION_LABELS = {
+    "English": {
+        "Listening": "Listening",
+        "Reading": "Reading",
+        "Use of English": "Use of English",
+        "Writing": "Writing"
+    },
+    "French": {
+        "Listening": "Compréhension orale",
+        "Reading": "Compréhension écrite",
+        "Use of English": "Grammaire / Vocabulaire",
+        "Writing": "Expression écrite"
+    }
+}
 BRANCHES = {"Menzel Bourguiba": "MB", "Bizerte": "BZ"}
 
 DEFAULT_DUR = {"A1": 60, "A2": 60, "B1": 90, "B2": 90, PLACEMENT_LEVEL: 35}
@@ -192,28 +206,32 @@ def trilang_result_message(row: dict) -> str:
     if test_type == "PLACEMENT":
         return (
             "📌 نتيجة — Test de Niveau (CECRL/CEFR)\n"
-            f"👤 الاسم/nom/name: {name}\n"
-            f"🌐 Langue/Language: {lang}\n"
-            f"📊 Score: {overall}/100\n"
-            f"✅ Niveau conseillé / Suggested level / المستوى المقترح: {suggested}\n\n"
-            "Détails / Details / التفاصيل:\n"
-            f"🎧 Listening: {L}\n"
-            f"📖 Reading: {R}\n"
-            f"🧠 Use of English: {U}\n"
-            f"✍️ Writing: {W}\n"
+            lang = row.get("language","English")
+
+            label_L = SECTION_LABELS[lang]["Listening"]
+            label_R = SECTION_LABELS[lang]["Reading"]
+            label_U = SECTION_LABELS[lang]["Use of English"]
+            label_W = SECTION_LABELS[lang]["Writing"]
+
+            f"🎧 {label_L}: {L}\n"
+            f"📖 {label_R}: {R}\n"
+            f"🧠 {label_U}: {U}\n"
+            f"✍️ {label_W}: {W}\n"
         )
 
     return (
         "📌 نتيجة الامتحان / Résultat / Result\n"
-        f"👤 الاسم/nom/name: {name}\n"
-        f"🌐 Langue/Language: {lang}\n"
-        f"🎯 Level / Niveau / المستوى: {level}\n"
-        f"📊 Overall: {overall}/100\n\n"
-        "Détails / Details / التفاصيل:\n"
-        f"🎧 Listening: {L}\n"
-        f"📖 Reading: {R}\n"
-        f"🧠 Use of English: {U}\n"
-        f"✍️ Writing: {W}\n"
+        lang = row.get("language","English")
+
+        label_L = SECTION_LABELS[lang]["Listening"]
+        label_R = SECTION_LABELS[lang]["Reading"]
+        label_U = SECTION_LABELS[lang]["Use of English"]
+        label_W = SECTION_LABELS[lang]["Writing"]
+
+        f"🎧 {label_L}: {L}\n"
+        f"📖 {label_R}: {R}\n"
+        f"🧠 {label_U}: {U}\n"
+        f"✍️ {label_W}: {W}\n"
     )
 
 # ---------------- Utils ----------------
