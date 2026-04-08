@@ -205,7 +205,7 @@ def trilang_result_message(row: dict) -> str:
 
     if test_type == "PLACEMENT":
         return (
-            "📌 نتيجة — Test de Niveau (CECRL/CEFR)\n"
+            " نتيجة — Test de Niveau (CECRL/CEFR)\n"
             lang = row.get("language","English")
 
             label_L = SECTION_LABELS[lang]["Listening"]
@@ -220,7 +220,7 @@ def trilang_result_message(row: dict) -> str:
         )
 
     return (
-        "📌 نتيجة الامتحان / Résultat / Result\n"
+        " نتيجة الامتحان / Résultat / Result\n"
         lang = row.get("language","English")
 
         label_L = SECTION_LABELS[lang]["Listening"]
