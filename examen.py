@@ -66,14 +66,41 @@ def upload_audio_to_supabase(file):
     except Exception as e:
         st.error(f"Upload error: {str(e)}")
         return None
-        def build_result_message(data):
-            lang = data.get("language", "English")
+def build_result_message(data):
+    lang = data.get("language", "English")
 
-            if lang == "English":
-                return f"Your exam is completed\n\nName: {data['name']}\nScore: {data['score']}/100\nLevel: {data['level']}\nSuggested Level: {data['suggested_level']}\n\nThank you"
+    if lang == "French":
+        label_L = "Compréhension orale"
+        label_R = "Compréhension écrite"
+        label_U = "Grammaire / Vocabulaire"
+        label_W = "Expression écrite"
 
-            elif lang == "French":
-                return f"Votre examen est terminé\n\nNom: {data['name']}\nScore: {data['score']}/100\nNiveau: {data['level']}\nNiveau suggéré: {data['suggested_level']}\n\nMerci"
+        return (
+            f"Votre examen est terminé\n\n"
+            f"Nom: {data['name']}\n"
+            f"Score: {data['score']}/100\n"
+            f"Niveau: {data['level']}\n"
+            f"Niveau suggéré: {data['suggested_level']}\n\n"
+            f"{label_L}: {data.get('listening','')}\n"
+            f"{label_R}: {data.get('reading','')}\n"
+            f"{label_U}: {data.get('use_of_english','')}\n"
+            f"{label_W}: {data.get('writing','')}\n\n"
+            f"Merci"
+        )
+
+    else:
+        return (
+            f"Your exam is completed\n\n"
+            f"Name: {data['name']}\n"
+            f"Score: {data['score']}/100\n"
+            f"Level: {data['level']}\n"
+            f"Suggested Level: {data['suggested_level']}\n\n"
+            f"Listening: {data.get('listening','')}\n"
+            f"Reading: {data.get('reading','')}\n"
+            f"Use of English: {data.get('use_of_english','')}\n"
+            f"Writing: {data.get('writing','')}\n\n"
+            f"Thank you"
+        )
     
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Mega Formation — Exams", layout="wide")
