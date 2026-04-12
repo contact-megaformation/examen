@@ -62,6 +62,10 @@ def upload_audio_to_supabase(file):
         else:
             st.error(f"Supabase error: {response.text}")
             return None
+
+    except Exception as e:
+        st.error(f"Upload error: {str(e)}")
+        return None
 def upload_pdf_to_supabase(file_path):
     import requests
     import uuid
