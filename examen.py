@@ -1565,12 +1565,12 @@ def admin_panel():
                         st.markdown(f"[📲 Open WhatsApp]({url})")
                     else:
                         st.error("رقم الهاتف غير موجود/غلط.")
-             pdf_url = row.get("pdf_url", "")
+                 pdf_url = row.get("pdf_url", "")
 
-            if pdf_url:
-                st.link_button("📄 Open PDF", pdf_url)
-            else:
-                st.warning("No PDF found for this candidate")
+                if pdf_url:
+                    st.link_button("📄 Open PDF", pdf_url)
+                else:
+                    st.warning("No PDF found for this candidate")
         st.markdown("---")
         st.markdown("### 🧾 Generate PDF Review (Questions + Candidate answers + Correction)")
         st.caption("ملاحظة: الـ PDF يتولد من آخر Submission صار في الـ session هذا (نفس المتصفح/الجلسة).")
