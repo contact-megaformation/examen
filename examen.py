@@ -1820,7 +1820,8 @@ def render_candidate():
         test_type = "PLACEMENT" if level == PLACEMENT_LEVEL else "EXAM"
         suggested = placement_suggest(overall) if test_type == "PLACEMENT" else ""
         passed = "PASS" if overall >= PASS_MARK else "FAIL"
-
+        pdf_url = upload_pdf_to_supabase(pdf_path)
+        row["pdf_url"] = pdf_url
         row = {
             "timestamp": now_iso(),
             "name": (name or "").strip(),
@@ -1837,8 +1838,7 @@ def render_candidate():
             "Reading": R_pct,
             "Use_of_English": U_pct,
             "Writing": W_pct,
-            "pdf_url": pdf_url,
-        }
+                }
 
         # save
         save_result_row(bcode, row)
@@ -1880,7 +1880,7 @@ def render_candidate():
             },
             suggested_level=suggested
         )
-        pdf_url = upload_pdf_to_supabase(pdf_path)
+        
 
         msg = build_result_message({
             "name": row["name"],
