@@ -1486,9 +1486,8 @@ def admin_panel():
                     else:
                         st.error("رقم الهاتف غير صحيح.")
         # 🔥 PDF LINK
-        row = dict(row)
 
-        pdf_url = row.get("pdf_url", "")
+        pdf_url = row["pdf_url"] if "pdf_url" in row else ""
 
         if pdf_url:
             st.link_button("📄 Open PDF", pdf_url)
