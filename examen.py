@@ -62,7 +62,6 @@ def upload_audio_to_supabase(file):
         else:
             st.error(f"Supabase error: {response.text}")
             return None
-# 🔥 هنا بالضبط تحط الكود الجديد
 def upload_pdf_to_supabase(file_path):
     import requests
     import uuid
