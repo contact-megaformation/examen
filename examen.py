@@ -1833,6 +1833,7 @@ def render_candidate():
             "Reading": R_pct,
             "Use_of_English": U_pct,
             "Writing": W_pct,
+            "pdf_url": pdf_url
         }
 
         # save
