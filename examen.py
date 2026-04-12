@@ -1485,13 +1485,7 @@ def admin_panel():
                         st.markdown(f"[📲 Open WhatsApp]({url})")
                     else:
                         st.error("رقم الهاتف غير صحيح.")
-        pdf_url = row.get("pdf_url", "")
-
-        if pdf_url:
-            st.link_button("📄 Open PDF", pdf_url)
-        else:
-            st.warning("No PDF found")
-        st.markdown("---")
+                st.markdown("---")
         dfc = ws_read_df(SHEET_CANDIDATES, CAND_COLS)
         if dfc.empty:
             st.info("No candidates yet.")
