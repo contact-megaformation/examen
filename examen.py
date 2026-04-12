@@ -1820,8 +1820,7 @@ def render_candidate():
         test_type = "PLACEMENT" if level == PLACEMENT_LEVEL else "EXAM"
         suggested = placement_suggest(overall) if test_type == "PLACEMENT" else ""
         passed = "PASS" if overall >= PASS_MARK else "FAIL"
-        pdf_url = upload_pdf_to_supabase(pdf_path)
-        row["pdf_url"] = pdf_url
+        
         row = {
             "timestamp": now_iso(),
             "name": (name or "").strip(),
@@ -1839,30 +1838,13 @@ def render_candidate():
             "Use_of_English": U_pct,
             "Writing": W_pct,
                 }
-
-        # save
-        save_result_row(bcode, row)
-        save_to_supabase({
-            "phone": phone,
-            "name": row["name"],
-            "language": language,
-            "level": row["level"],
-            "suggested_level": suggested,
-            "score": overall,
-            "listening": L_pct,
-            "reading": R_pct,
-            "use_of_english": U_pct,
-            "writing": W_pct,
-            "answers": st.session_state.answers
-        })
         pdf_dir = "reviews"
         os.makedirs(pdf_dir, exist_ok=True)
-
         pdf_path = os.path.join(
             pdf_dir,
             f"review_{phone}_{row['timestamp'].replace(':','-')}.pdf"
+        
         )
-
         generate_review_pdf(
             out_path=pdf_path,
             candidate_name=row["name"],
@@ -1880,8 +1862,24 @@ def render_candidate():
             },
             suggested_level=suggested
         )
-        
-
+        pdf_url = upload_pdf_to_supabase(pdf_path)
+        row["pdf_url"] = pdf_url
+        # save
+        save_result_row(bcode, row)
+        save_to_supabase({
+            "phone": phone,
+            "name": row["name"],
+            "language": language,
+            "level": row["level"],
+            "suggested_level": suggested,
+            "score": overall,
+            "listening": L_pct,
+            "reading": R_pct,
+            "use_of_english": U_pct,
+            "writing": W_pct,
+            "answers": st.session_state.answers
+        })
+                   
         msg = build_result_message({
             "name": row["name"],
             "score": overall,
