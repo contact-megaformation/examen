@@ -1487,12 +1487,12 @@ def admin_panel():
                         st.error("رقم الهاتف غير صحيح.")
         # 🔥 PDF LINK
 
-        pdf_url = row["pdf_url"] if "pdf_url" in row else ""
+        pdf_url = row["pdf_url"] if "pdf_url" in row.index else ""
 
         if pdf_url:
             st.link_button("📄 Open PDF", pdf_url)
         else:
-            st.warning("No PDF found for this candidate")
+            st.warning("No PDF found")
         st.markdown("---")
         dfc = ws_read_df(SHEET_CANDIDATES, CAND_COLS)
         if dfc.empty:
