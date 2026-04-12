@@ -62,7 +62,41 @@ def upload_audio_to_supabase(file):
         else:
             st.error(f"Supabase error: {response.text}")
             return None
+# 🔥 هنا بالضبط تحط الكود الجديد
+def upload_pdf_to_supabase(file_path):
+    import requests
+    import uuid
 
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+
+        filename = f"{uuid.uuid4()}.pdf"
+
+        upload_url = f"{url}/storage/v1/object/exam-pdfs/{filename}"
+
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/pdf"
+        }
+
+        with open(file_path, "rb") as f:
+            response = requests.post(
+                upload_url,
+                headers=headers,
+                data=f
+            )
+
+        if response.status_code in [200, 201]:
+            public_url = f"{url}/storage/v1/object/public/exam-pdfs/{filename}"
+            return public_url
+        else:
+            st.error(f"PDF upload error: {response.text}")
+            return None
+
+    except Exception as e:
+        st.error(f"Upload error: {str(e)}")
+        return None
     except Exception as e:
         st.error(f"Upload error: {str(e)}")
         return None
@@ -1838,6 +1872,8 @@ def render_candidate():
             },
             suggested_level=suggested
         )
+        pdf_url = upload_pdf_to_supabase(pdf_path)
+
         msg = build_result_message({
             "name": row["name"],
             "score": overall,
